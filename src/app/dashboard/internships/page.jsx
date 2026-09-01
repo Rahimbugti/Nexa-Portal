@@ -260,22 +260,37 @@ export default function InternshipsPage() {
     const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setLastPingTime(nowTime);
 
+    const targetEmail = (activeRemoteStudent.email || "").toLowerCase().trim();
+    const newPing = {
+      id: `ping-${Date.now()}`,
+      target_email: targetEmail,
+      target_name: activeRemoteStudent.full_name,
+      sender: "Admin Supervision",
+      message: "⚡ Admin is requesting live screen supervision! Please click 'Share Live Screen to Admin' on your dashboard.",
+      time: nowTime,
+      timestamp: new Date().toISOString(),
+    };
+
     try {
       const pings = JSON.parse(localStorage.getItem("nexa_active_pings") || "[]");
-      const newPing = {
-        id: `ping-${Date.now()}`,
-        target_email: (activeRemoteStudent.email || "").toLowerCase().trim(),
-        target_name: activeRemoteStudent.full_name,
-        sender: "Admin Supervision",
-        message: "⚡ Admin is reviewing your live workstation stream. Please ensure your active task progress is logged.",
-        time: nowTime,
-        timestamp: new Date().toISOString(),
-      };
       localStorage.setItem("nexa_active_pings", JSON.stringify([newPing, ...pings]));
       window.dispatchEvent(new Event("nexa_ping_received"));
+
+      await dbSaveRecord("admin_pings", newPing);
+
+      const notifChannel = supabase.channel("nexa-global-alerts");
+      await notifChannel.subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          notifChannel.send({
+            type: "broadcast",
+            event: "ping",
+            payload: newPing,
+          });
+        }
+      });
     } catch (e) {}
 
-    showToast("Ping Sent ⚡", `Instant notification alert dispatched to ${activeRemoteStudent.full_name}'s screen!`, "success");
+    showToast("Ping Sent ⚡", `Supervision alert dispatched to ${activeRemoteStudent.full_name}'s device!`, "success");
   };
 
   const showAlert = (title, message, type = "info") => {

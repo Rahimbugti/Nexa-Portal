@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 import Modal from "@/components/Modal";
 import { showToast } from "@/components/Toast";
 import { generatePrintableStudentFeeReceiptPdf } from "@/lib/generateStudentReceiptPdf";
@@ -467,6 +468,21 @@ export default function StudentDedicatedDashboardPage() {
     };
 
     window.addEventListener("nexa_ping_received", checkAdminPings);
+
+    // Realtime Supabase cross-device ping receiver
+    const pingChannel = supabase.channel("nexa-global-alerts");
+    pingChannel
+      .on("broadcast", { event: "ping" }, (payload) => {
+        const pingData = payload?.payload || payload;
+        const myEmail = (savedEmail || "").toLowerCase().trim();
+        if (
+          pingData &&
+          (!pingData.target_email || pingData.target_email === myEmail || myEmail.includes(pingData.target_email))
+        ) {
+          showToast("🔔 Admin Supervision Alert", pingData.message || "Admin is reviewing your workstation.", "warning");
+        }
+      })
+      .subscribe();
 
     async function fetchStudentData() {
       const allStudents = await dbFetch("students").catch(() => []);
