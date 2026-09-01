@@ -108,12 +108,14 @@ export default function InternshipsPage() {
   // Daily Progress Log Input State
   const [dailyLogText, setDailyLogText] = useState("");
   const [selectedInternId, setSelectedInternId] = useState(null);
+  const [remoteLiveFrameUrl, setRemoteLiveFrameUrl] = useState(null);
 
   const viewerClientRef = useRef(null);
 
   const startLiveScreenAccess = async (student) => {
     setActiveRemoteStudent(student);
     setIsLiveStreamModalOpen(true);
+    setRemoteLiveFrameUrl(null);
 
     if (viewerClientRef.current) {
       viewerClientRef.current.disconnect();
@@ -125,6 +127,10 @@ export default function InternshipsPage() {
       userKey: targetKey,
       onRemoteStream: (stream) => {
         setMediaStream(stream);
+        setStreamViewMode("live_stream");
+      },
+      onRemoteFrame: (frameUrl) => {
+        setRemoteLiveFrameUrl(frameUrl);
         setStreamViewMode("live_stream");
       },
       onConnectionStateChange: (state) => {
@@ -1442,9 +1448,27 @@ export default function InternshipsPage() {
                   autoPlay
                   playsInline
                   muted
-                  className="w-full max-h-[380px] rounded-xl object-contain bg-black"
-                />
-                {!mediaStream && (
+                {mediaStream ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full max-h-[380px] rounded-xl object-contain bg-black"
+                  />
+                ) : remoteLiveFrameUrl ? (
+                  <div className="relative w-full max-h-[380px] bg-black rounded-xl overflow-hidden flex items-center justify-center">
+                    <img
+                      src={remoteLiveFrameUrl}
+                      alt="Live Screen Stream"
+                      className="w-full h-full object-contain max-h-[380px]"
+                    />
+                    <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/90 text-white font-bold text-[10px] flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                      Live Frame Stream Active 🟢
+                    </span>
+                  </div>
+                ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/85 p-6 text-center space-y-3">
                     <FaDesktop className="text-4xl text-purple-400 animate-pulse" />
                     <p className="text-sm font-bold text-white">Connecting to Remote Intern Workstation...</p>

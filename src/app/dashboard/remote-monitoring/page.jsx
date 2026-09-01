@@ -465,7 +465,8 @@ export default function RemoteMonitoringPage() {
       user: user,
       connectionState: "connecting",
       stream: null,
-      statusMessage: "Establishing WebRTC P2P direct stream...",
+      frameUrl: null,
+      statusMessage: "Establishing WebRTC direct stream...",
       lastSeen: "Just now",
     });
 
@@ -476,7 +477,15 @@ export default function RemoteMonitoringPage() {
           ...prev,
           stream: stream,
           connectionState: "connected",
-          statusMessage: "WebRTC Live Stream Active",
+          statusMessage: "WebRTC Live Stream Active 🟢",
+        }));
+      },
+      onRemoteFrame: (frameUrl) => {
+        setLiveViewerModal((prev) => ({
+          ...prev,
+          frameUrl: frameUrl,
+          connectionState: "connected",
+          statusMessage: "Live Telemetry Stream Active 🟢",
         }));
       },
       onConnectionStateChange: (st) => {
@@ -1554,17 +1563,32 @@ export default function RemoteMonitoringPage() {
 
             {/* Main Video Screen Player */}
             <div className="rounded-2xl overflow-hidden bg-black border-2 border-slate-800 shadow-2xl relative min-h-[380px] max-h-[72vh] flex flex-col items-center justify-center p-2">
-              <video
-                ref={viewerVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-auto max-h-[68vh] object-contain rounded-xl bg-black ${
-                  liveViewerModal.connectionState === "connected" ? "block" : "hidden"
-                }`}
-              />
-
-              {liveViewerModal.connectionState !== "connected" && (
+              {liveViewerModal.stream ? (
+                <video
+                  ref={(node) => {
+                    if (node && liveViewerModal.stream) {
+                      node.srcObject = liveViewerModal.stream;
+                      node.play().catch(() => {});
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-auto max-h-[68vh] object-contain rounded-xl bg-black block"
+                />
+              ) : liveViewerModal.frameUrl ? (
+                <div className="relative w-full h-full flex items-center justify-center bg-black">
+                  <img
+                    src={liveViewerModal.frameUrl}
+                    alt="Live Screen Stream"
+                    className="w-full h-auto max-h-[68vh] object-contain rounded-xl"
+                  />
+                  <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-md">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                    Live Stream Active 🟢
+                  </span>
+                </div>
+              ) : (
                 <div className="flex flex-col items-center justify-center p-8 text-center space-y-3">
                   <FaDesktop className="text-5xl text-blue-400 animate-pulse" />
                   <p className="text-sm font-bold text-white">

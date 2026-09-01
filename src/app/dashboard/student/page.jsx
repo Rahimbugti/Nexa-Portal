@@ -321,6 +321,7 @@ export default function StudentDedicatedDashboardPage() {
   const [screenMediaStream, setScreenMediaStream] = useState(null);
   const [screenAccessModalOpen, setScreenAccessModalOpen] = useState(false);
   const [remoteViewerStream, setRemoteViewerStream] = useState(null);
+  const [remoteViewerFrameUrl, setRemoteViewerFrameUrl] = useState(null);
   const [remoteViewerState, setRemoteViewerState] = useState("idle");
   const [remoteViewerStatus, setRemoteViewerStatus] = useState("");
   const [incomingSupervisionModal, setIncomingSupervisionModal] = useState({
@@ -383,12 +384,14 @@ export default function StudentDedicatedDashboardPage() {
       studentViewerClientRef.current = null;
     }
 
-    const targetKey = (studentInfo?.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
+    const targetKey = (studentInfo?.email || localStorage.getItem("current_user_email") || studentInfo?.name || "").toLowerCase().trim();
     if (!targetKey) {
       setRemoteViewerStatus("Student email not found for live stream.");
       return;
     }
 
+    setRemoteViewerStream(null);
+    setRemoteViewerFrameUrl(null);
     setRemoteViewerState("connecting");
     setRemoteViewerStatus("Establishing direct WebRTC connection to student screen...");
 
@@ -398,6 +401,11 @@ export default function StudentDedicatedDashboardPage() {
         setRemoteViewerStream(stream);
         setRemoteViewerState("connected");
         setRemoteViewerStatus("WebRTC Live Stream Connected 🟢");
+      },
+      onRemoteFrame: (frameUrl) => {
+        setRemoteViewerFrameUrl(frameUrl);
+        setRemoteViewerState("connected");
+        setRemoteViewerStatus("Live Screen Telemetry Active 🟢");
       },
       onConnectionStateChange: (state) => {
         setRemoteViewerState(state);
@@ -2910,6 +2918,18 @@ export default function StudentDedicatedDashboardPage() {
                     playsInline
                     className="w-full h-full object-contain"
                   />
+                ) : remoteViewerFrameUrl ? (
+                  <div className="relative w-full h-full bg-black flex items-center justify-center">
+                    <img
+                      src={remoteViewerFrameUrl}
+                      alt="Live Remote Screen"
+                      className="w-full h-full object-contain"
+                    />
+                    <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-emerald-600/90 text-white font-bold text-[10px] flex items-center gap-1 shadow-md">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                      Live Stream Active 🟢
+                    </span>
+                  </div>
                 ) : (
                   <div className="text-center p-8 space-y-3">
                     <FaDesktop className="mx-auto h-12 w-12 text-purple-400 animate-pulse" />

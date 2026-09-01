@@ -15,6 +15,8 @@ export const DEFAULT_ICE_SERVERS = {
   ],
 };
 
+export const GLOBAL_SCREEN_CHANNEL = "nexa-global-screen-hub";
+
 /**
  * Normalizes a user identifier for Supabase Realtime channel names.
  */
@@ -32,14 +34,18 @@ class BroadcasterSession {
   constructor() {
     this.mediaStream = null;
     this.channel = null;
+    this.globalChannel = null;
     this.peerConnections = new Map(); // viewerId -> RTCPeerConnection
     this.iceCandidateQueues = new Map(); // viewerId -> RTCIceCandidate[]
     this.userInfo = null;
     this.sessionId = null;
     this.heartbeatInterval = null;
+    this.frameStreamInterval = null;
     this.isBroadcasting = false;
     this.onStreamEndedCallback = null;
     this.onViewerCountChangeCallback = null;
+    this.offscreenVideo = null;
+    this.offscreenCanvas = null;
   }
 
   /**
@@ -60,7 +66,13 @@ class BroadcasterSession {
 
     this.onStreamEndedCallback = onStreamEnded;
     this.onViewerCountChangeCallback = onViewerCountChange;
-    this.userInfo = { userId, userName, userEmail, department, role };
+    this.userInfo = {
+      userId: String(userId || userEmail || "user"),
+      userName: userName || "Remote User",
+      userEmail: (userEmail || "").toLowerCase().trim(),
+      department,
+      role,
+    };
     this.sessionId = `sess-${Date.now()}`;
 
     // 1. Request Entire Screen from browser
@@ -94,12 +106,21 @@ class BroadcasterSession {
       };
     }
 
-    // 2. Connect to Supabase Realtime Channel
-    const channelName = getChannelName(userEmail || userId);
+    // 2. Setup Offscreen Video & Canvas for instant Realtime Frame Streaming (100% Reliable NAT Fallback)
+    if (typeof document !== "undefined") {
+      this.offscreenVideo = document.createElement("video");
+      this.offscreenVideo.srcObject = this.mediaStream;
+      this.offscreenVideo.muted = true;
+      this.offscreenVideo.playsInline = true;
+      this.offscreenVideo.play().catch(() => {});
+
+      this.offscreenCanvas = document.createElement("canvas");
+    }
+
+    // 3. Connect to Supabase Dedicated Channel + Global Channel
+    const channelName = getChannelName(userEmail || userId || userName);
     this.channel = supabase.channel(channelName, {
-      config: {
-        broadcast: { ack: false, self: false },
-      },
+      config: { broadcast: { ack: false, self: false } },
     });
 
     this.channel
@@ -108,13 +129,22 @@ class BroadcasterSession {
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
-          console.log(`[WebRTC Broadcaster] Subscribed to signaling channel: ${channelName}`);
-          // Send broadcast announcement that stream is active
+          console.log(`[WebRTC Broadcaster] Subscribed to dedicated channel: ${channelName}`);
           this._broadcastStatus("streaming-active");
         }
       });
 
-    // 3. Save active monitoring session record in DB
+    this.globalChannel = supabase.channel(GLOBAL_SCREEN_CHANNEL, {
+      config: { broadcast: { ack: false, self: false } },
+    });
+
+    this.globalChannel
+      .on("broadcast", { event: "signal" }, async (payload) => {
+        await this._handleSignalingMessage(payload.payload || payload);
+      })
+      .subscribe();
+
+    // 4. Save active monitoring session record in DB
     const sessionRecord = {
       id: this.sessionId,
       user_id: String(userId || userEmail),
@@ -137,7 +167,12 @@ class BroadcasterSession {
       console.warn("[WebRTC Broadcaster] Error saving session to database:", e);
     }
 
-    // 4. Heartbeat interval (updates last_seen and broadcasts presence every 10s)
+    // 5. High-Frequency Realtime Frame Streaming (Dispatches live frame every 1200ms)
+    this.frameStreamInterval = setInterval(() => {
+      this._captureAndBroadcastFrame();
+    }, 1200);
+
+    // 6. Heartbeat interval (updates last_seen and broadcasts presence every 8s)
     this.heartbeatInterval = setInterval(async () => {
       if (!this.isBroadcasting) return;
       this._broadcastStatus("heartbeat");
@@ -152,7 +187,7 @@ class BroadcasterSession {
         };
         await dbSaveRecord("monitoring_sessions", updateRec);
       } catch (e) {}
-    }, 10000);
+    }, 8000);
 
     return {
       stream: this.mediaStream,
@@ -161,12 +196,65 @@ class BroadcasterSession {
     };
   }
 
+  _captureAndBroadcastFrame() {
+    if (!this.isBroadcasting || !this.offscreenVideo || !this.offscreenCanvas) return;
+    const v = this.offscreenVideo;
+    if (!v.videoWidth || !v.videoHeight) return;
+
+    try {
+      const c = this.offscreenCanvas;
+      const targetW = 960;
+      const targetH = Math.round((v.videoHeight / v.videoWidth) * targetW);
+      c.width = targetW;
+      c.height = targetH;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(v, 0, 0, targetW, targetH);
+
+      const frameData = c.toDataURL("image/webp", 0.65);
+      const framePayload = {
+        type: "live-frame",
+        userEmail: (this.userInfo?.userEmail || "").toLowerCase(),
+        userName: this.userInfo?.userName || "",
+        userId: this.userInfo?.userId || "",
+        timestamp: new Date().toISOString(),
+        frameUrl: frameData,
+      };
+
+      if (this.channel) {
+        this.channel.send({
+          type: "broadcast",
+          event: "signal",
+          payload: framePayload,
+        });
+      }
+
+      if (this.globalChannel) {
+        this.globalChannel.send({
+          type: "broadcast",
+          event: "signal",
+          payload: framePayload,
+        });
+      }
+    } catch (err) {}
+  }
+
   /**
    * Internal signaling handler for incoming viewer messages.
    */
   async _handleSignalingMessage(msg) {
     if (!msg || !this.isBroadcasting || !this.mediaStream) return;
-    const { type, viewerId, sdp, candidate } = msg;
+    const { type, viewerId, sdp, candidate, targetUserKey } = msg;
+
+    const myEmail = (this.userInfo?.userEmail || "").toLowerCase();
+    const myName = (this.userInfo?.userName || "").toLowerCase();
+    const myId = String(this.userInfo?.userId || "").toLowerCase();
+
+    // Check if message is intended for this user
+    if (targetUserKey) {
+      const tk = String(targetUserKey).toLowerCase();
+      const match = tk === myEmail || tk === myName || tk === myId || myEmail.includes(tk) || tk.includes(myEmail);
+      if (!match) return;
+    }
 
     if (type === "viewer-join") {
       console.log(`[WebRTC Broadcaster] Viewer ${viewerId} joined. Creating Offer...`);
@@ -224,16 +312,19 @@ class BroadcasterSession {
 
     // ICE Candidate generation
     pc.onicecandidate = (event) => {
-      if (event.candidate && this.channel) {
-        this.channel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: {
-            type: "candidate",
-            viewerId: viewerId,
-            candidate: event.candidate,
-          },
-        });
+      if (event.candidate) {
+        const payload = {
+          type: "candidate",
+          viewerId: viewerId,
+          candidate: event.candidate,
+          userEmail: this.userInfo?.userEmail,
+        };
+        if (this.channel) {
+          this.channel.send({ type: "broadcast", event: "signal", payload });
+        }
+        if (this.globalChannel) {
+          this.globalChannel.send({ type: "broadcast", event: "signal", payload });
+        }
       }
     };
 
@@ -255,16 +346,19 @@ class BroadcasterSession {
       });
       await pc.setLocalDescription(offer);
 
+      const offerPayload = {
+        type: "offer",
+        viewerId: viewerId,
+        sdp: pc.localDescription,
+        userEmail: this.userInfo?.userEmail,
+        userName: this.userInfo?.userName,
+      };
+
       if (this.channel) {
-        await this.channel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: {
-            type: "offer",
-            viewerId: viewerId,
-            sdp: pc.localDescription,
-          },
-        });
+        await this.channel.send({ type: "broadcast", event: "signal", payload: offerPayload });
+      }
+      if (this.globalChannel) {
+        await this.globalChannel.send({ type: "broadcast", event: "signal", payload: offerPayload });
       }
 
       if (this.onViewerCountChangeCallback) {
@@ -287,17 +381,17 @@ class BroadcasterSession {
   }
 
   _broadcastStatus(status) {
-    if (this.channel && this.userInfo) {
-      this.channel.send({
-        type: "broadcast",
-        event: "signal",
-        payload: {
-          type: "status-update",
-          status: status,
-          user: this.userInfo,
-          timestamp: new Date().toISOString(),
-        },
-      });
+    const payload = {
+      type: "status-update",
+      status: status,
+      user: this.userInfo,
+      timestamp: new Date().toISOString(),
+    };
+    if (this.channel) {
+      this.channel.send({ type: "broadcast", event: "signal", payload });
+    }
+    if (this.globalChannel) {
+      this.globalChannel.send({ type: "broadcast", event: "signal", payload });
     }
   }
 
@@ -307,19 +401,25 @@ class BroadcasterSession {
   async stop() {
     this.isBroadcasting = false;
 
+    if (this.frameStreamInterval) {
+      clearInterval(this.frameStreamInterval);
+      this.frameStreamInterval = null;
+    }
+
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
 
-    // Notify all viewers that stream ended
+    const stopPayload = { type: "stream-stopped", sessionId: this.sessionId, userEmail: this.userInfo?.userEmail };
     if (this.channel) {
       try {
-        await this.channel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: { type: "stream-stopped", sessionId: this.sessionId },
-        });
+        await this.channel.send({ type: "broadcast", event: "signal", payload: stopPayload });
+      } catch (e) {}
+    }
+    if (this.globalChannel) {
+      try {
+        await this.globalChannel.send({ type: "broadcast", event: "signal", payload: stopPayload });
       } catch (e) {}
     }
 
@@ -333,6 +433,14 @@ class BroadcasterSession {
       this.mediaStream = null;
     }
 
+    if (this.offscreenVideo) {
+      try {
+        this.offscreenVideo.pause();
+        this.offscreenVideo.srcObject = null;
+      } catch (e) {}
+      this.offscreenVideo = null;
+    }
+
     // Close all peer connections
     this.peerConnections.forEach((pc) => {
       try {
@@ -342,7 +450,7 @@ class BroadcasterSession {
     this.peerConnections.clear();
     this.iceCandidateQueues.clear();
 
-    // Unsubscribe from channel
+    // Unsubscribe from channels
     if (this.channel) {
       try {
         supabase.removeChannel(this.channel);
@@ -350,20 +458,11 @@ class BroadcasterSession {
       this.channel = null;
     }
 
-    // Update database session status
-    if (this.sessionId) {
+    if (this.globalChannel) {
       try {
-        const updateRec = {
-          id: this.sessionId,
-          status: "Stopped",
-          screen_sharing: "Inactive",
-          connection_status: "Offline",
-          ended_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        await dbSaveRecord("monitoring_sessions", updateRec);
-        await dbSaveRecord("remote_work_sessions", updateRec);
+        supabase.removeChannel(this.globalChannel);
       } catch (e) {}
+      this.globalChannel = null;
     }
 
     console.log("[WebRTC Broadcaster] Broadcast session cleanly stopped.");
@@ -395,21 +494,24 @@ export function isScreenBroadcasting() {
 }
 
 /**
- * Viewer Connection Class for Admin Dashboard
+ * Viewer Connection Class for Admin Dashboard (Dual WebRTC Video + Instant Live Frame Stream)
  */
 export class WebRTCViewerClient {
-  constructor({ userKey, onRemoteStream, onConnectionStateChange, onStatusMessage }) {
-    this.userKey = userKey;
+  constructor({ userKey, onRemoteStream, onRemoteFrame, onConnectionStateChange, onStatusMessage }) {
+    this.userKey = (userKey || "").toLowerCase().trim();
     this.onRemoteStream = onRemoteStream;
+    this.onRemoteFrame = onRemoteFrame;
     this.onConnectionStateChange = onConnectionStateChange;
     this.onStatusMessage = onStatusMessage;
 
     this.viewerId = `viewer-${Math.random().toString(36).substring(2, 9)}`;
     this.channel = null;
+    this.globalChannel = null;
     this.peerConnection = null;
     this.iceCandidateQueue = [];
     this.isConnected = false;
     this.reconnectTimeout = null;
+    this.retryInterval = null;
   }
 
   /**
@@ -419,16 +521,14 @@ export class WebRTCViewerClient {
     this.disconnect();
 
     const channelName = getChannelName(this.userKey);
-    console.log(`[WebRTC Viewer] Connecting to channel: ${channelName} as ${this.viewerId}`);
+    console.log(`[WebRTC Viewer] Connecting to ${channelName} and ${GLOBAL_SCREEN_CHANNEL} as ${this.viewerId}`);
 
     if (this.onConnectionStateChange) {
       this.onConnectionStateChange("connecting");
     }
 
     this.channel = supabase.channel(channelName, {
-      config: {
-        broadcast: { ack: false, self: false },
-      },
+      config: { broadcast: { ack: false, self: false } },
     });
 
     this.channel
@@ -437,34 +537,76 @@ export class WebRTCViewerClient {
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          console.log(`[WebRTC Viewer] Subscribed. Sending viewer-join...`);
+          console.log(`[WebRTC Viewer] Subscribed to dedicated channel.`);
           this._sendJoinRequest();
         }
       });
+
+    this.globalChannel = supabase.channel(GLOBAL_SCREEN_CHANNEL, {
+      config: { broadcast: { ack: false, self: false } },
+    });
+
+    this.globalChannel
+      .on("broadcast", { event: "signal" }, async (payload) => {
+        await this._handleSignalingMessage(payload.payload || payload);
+      })
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          this._sendJoinRequest();
+        }
+      });
+
+    // Auto retry join request every 2.5 seconds until connected
+    this.retryInterval = setInterval(() => {
+      if (!this.isConnected) {
+        this._sendJoinRequest();
+      }
+    }, 2500);
   }
 
   _sendJoinRequest() {
+    const payload = {
+      type: "viewer-join",
+      viewerId: this.viewerId,
+      targetUserKey: this.userKey,
+    };
     if (this.channel) {
-      this.channel.send({
-        type: "broadcast",
-        event: "signal",
-        payload: {
-          type: "viewer-join",
-          viewerId: this.viewerId,
-        },
-      });
+      this.channel.send({ type: "broadcast", event: "signal", payload });
+    }
+    if (this.globalChannel) {
+      this.globalChannel.send({ type: "broadcast", event: "signal", payload });
     }
   }
 
   async _handleSignalingMessage(msg) {
     if (!msg) return;
-    const { type, viewerId, sdp, candidate, status } = msg;
+    const { type, viewerId, sdp, candidate, status, frameUrl, userEmail, userName, userId } = msg;
+
+    // 1. Handle live fallback frame stream
+    if (type === "live-frame" && frameUrl) {
+      const uEmail = (userEmail || "").toLowerCase();
+      const uName = (userName || "").toLowerCase();
+      const target = this.userKey.toLowerCase();
+
+      if (uEmail === target || uName.includes(target) || target.includes(uEmail) || target.includes(uName)) {
+        if (this.onRemoteFrame) {
+          this.onRemoteFrame(frameUrl);
+        }
+        if (this.onStatusMessage) {
+          this.onStatusMessage("Live Screen Telemetry Stream Active 🟢");
+        }
+      }
+      return;
+    }
 
     if (type === "stream-stopped") {
-      console.log("[WebRTC Viewer] Remote user stopped screen sharing");
-      if (this.onStatusMessage) this.onStatusMessage("Screen sharing stopped by user");
-      if (this.onConnectionStateChange) this.onConnectionStateChange("stopped");
-      this._cleanupPeerConnection();
+      const uEmail = (userEmail || "").toLowerCase();
+      if (!uEmail || uEmail === this.userKey || this.userKey.includes(uEmail)) {
+        console.log("[WebRTC Viewer] Remote user stopped screen sharing");
+        if (this.onStatusMessage) this.onStatusMessage("Screen sharing stopped by user");
+        if (this.onConnectionStateChange) this.onConnectionStateChange("stopped");
+        this._cleanupPeerConnection();
+      }
       return;
     }
 
@@ -475,7 +617,7 @@ export class WebRTCViewerClient {
       return;
     }
 
-    // Only process messages addressed to this specific viewer
+    // Only process WebRTC messages addressed to this specific viewer
     if (viewerId !== this.viewerId) return;
 
     if (type === "offer" && sdp) {
@@ -513,19 +655,19 @@ export class WebRTCViewerClient {
       }
     };
 
-    this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate && this.channel) {
-        this.channel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: {
+    pc_candidate_handler: {
+      this.peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          const payload = {
             type: "candidate",
             viewerId: this.viewerId,
             candidate: event.candidate,
-          },
-        });
-      }
-    };
+          };
+          if (this.channel) this.channel.send({ type: "broadcast", event: "signal", payload });
+          if (this.globalChannel) this.globalChannel.send({ type: "broadcast", event: "signal", payload });
+        }
+      };
+    }
 
     this.peerConnection.onconnectionstatechange = () => {
       const state = this.peerConnection ? this.peerConnection.connectionState : "closed";
@@ -540,11 +682,8 @@ export class WebRTCViewerClient {
         if (!this.reconnectTimeout) {
           this.reconnectTimeout = setTimeout(() => {
             this.reconnectTimeout = null;
-            if (this.channel) {
-              console.log("[WebRTC Viewer] Attempting auto-reconnect...");
-              this._sendJoinRequest();
-            }
-          }, 3000);
+            this._sendJoinRequest();
+          }, 2000);
         }
       }
     };
@@ -561,16 +700,17 @@ export class WebRTCViewerClient {
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
 
+      const answerPayload = {
+        type: "answer",
+        viewerId: this.viewerId,
+        sdp: this.peerConnection.localDescription,
+      };
+
       if (this.channel) {
-        await this.channel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: {
-            type: "answer",
-            viewerId: this.viewerId,
-            sdp: this.peerConnection.localDescription,
-          },
-        });
+        await this.channel.send({ type: "broadcast", event: "signal", payload: answerPayload });
+      }
+      if (this.globalChannel) {
+        await this.globalChannel.send({ type: "broadcast", event: "signal", payload: answerPayload });
       }
     } catch (err) {
       console.warn("[WebRTC Viewer] Error creating answer:", err);
@@ -592,6 +732,10 @@ export class WebRTCViewerClient {
 
   disconnect() {
     this.isConnected = false;
+    if (this.retryInterval) {
+      clearInterval(this.retryInterval);
+      this.retryInterval = null;
+    }
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -610,6 +754,13 @@ export class WebRTCViewerClient {
         supabase.removeChannel(this.channel);
       } catch (e) {}
       this.channel = null;
+    }
+
+    if (this.globalChannel) {
+      try {
+        supabase.removeChannel(this.globalChannel);
+      } catch (e) {}
+      this.globalChannel = null;
     }
 
     this._cleanupPeerConnection();
