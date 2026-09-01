@@ -550,17 +550,49 @@ export default function StudentDedicatedDashboardPage() {
     setIsAdminUser(isAdmin);
     setRole(savedRole);
 
+    // Web Audio Synthesizer Chime for Instant Notice
+    const playAlertChime = () => {
+      try {
+        if (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+          osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.4);
+        }
+      } catch (e) {}
+    };
+
+    const isTargetForMe = (ping) => {
+      if (!ping) return false;
+      const targetEm = (ping.target_email || "").toLowerCase().trim();
+      const targetNm = (ping.target_name || "").toLowerCase().trim();
+      const myEm = (savedEmail || "").toLowerCase().trim();
+      const myNm = (savedName || "").toLowerCase().trim();
+
+      if (!targetEm && !targetNm) return true;
+      if (targetEm && myEm && (targetEm === myEm || myEm.includes(targetEm) || targetEm.includes(myEm))) return true;
+      if (targetNm && (myNm.includes(targetNm) || targetNm.includes(myNm) || myEm.includes(targetNm.replace(/\s+/g, "")))) return true;
+      // If student is the active single student logged in and not admin, accept
+      if (!isAdmin) return true;
+      return false;
+    };
+
     const checkAdminPings = () => {
       try {
         const pings = JSON.parse(localStorage.getItem("nexa_active_pings") || "[]");
         if (pings.length > 0) {
-          const myEmail = (savedEmail || "").toLowerCase().trim();
           const latestPing = pings[0];
-          if (
-            latestPing &&
-            (!latestPing.target_email || latestPing.target_email === myEmail || myEmail.includes(latestPing.target_email))
-          ) {
-            showToast("⚡ Admin Ping Received", latestPing.message, "info");
+          if (isTargetForMe(latestPing)) {
+            playAlertChime();
+            showToast("⚡ Admin Supervision Alert", latestPing.message, "warning");
             setIncomingSupervisionModal({ isOpen: true, ping: latestPing });
           }
         }
@@ -574,16 +606,40 @@ export default function StudentDedicatedDashboardPage() {
     pingChannel
       .on("broadcast", { event: "ping" }, (payload) => {
         const pingData = payload?.payload || payload;
-        const myEmail = (savedEmail || "").toLowerCase().trim();
-        if (
-          pingData &&
-          (!pingData.target_email || pingData.target_email === myEmail || myEmail.includes(pingData.target_email))
-        ) {
+        if (isTargetForMe(pingData)) {
+          playAlertChime();
           showToast("🔔 Admin Supervision Alert", pingData.message || "Admin is reviewing your workstation.", "warning");
           setIncomingSupervisionModal({ isOpen: true, ping: pingData });
         }
       })
+      .on("broadcast", { event: "snapshot-request" }, (payload) => {
+        const pingData = payload?.payload || payload;
+        if (isTargetForMe(pingData)) {
+          playAlertChime();
+          showToast("📸 Screen Audit Request", pingData.message || "Admin requested an audit screenshot of your screen.", "warning");
+          setIncomingSupervisionModal({ isOpen: true, ping: { ...pingData, type: "snapshot-request" } });
+        }
+      })
       .subscribe();
+
+    // Background polling fallback for DB alerts
+    let lastSeenPingId = null;
+    const alertPollInterval = setInterval(async () => {
+      try {
+        const dbPings = await dbFetch("admin_pings").catch(() => []);
+        if (Array.isArray(dbPings) && dbPings.length > 0) {
+          const latest = dbPings[dbPings.length - 1];
+          if (latest && latest.id !== lastSeenPingId && isTargetForMe(latest)) {
+            const pingAge = Date.now() - new Date(latest.timestamp || Date.now()).getTime();
+            if (pingAge < 60000) { // Only show pings younger than 1 minute
+              lastSeenPingId = latest.id;
+              playAlertChime();
+              setIncomingSupervisionModal({ isOpen: true, ping: latest });
+            }
+          }
+        }
+      } catch (e) {}
+    }, 4000);
 
     async function fetchStudentData() {
       const allStudents = await dbFetch("students").catch(() => []);
