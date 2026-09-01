@@ -139,6 +139,7 @@ export default function InternshipsPage() {
 
     viewerClientRef.current = client;
     client.connect();
+    setStreamViewMode("live_stream");
 
     try {
       const allScreenshots = await dbFetch("screenshot_logs", []).catch(() => []);
@@ -148,17 +149,11 @@ export default function InternshipsPage() {
           (s.employeeName && s.employeeName.toLowerCase().includes(student.full_name?.toLowerCase()))
       );
       setStudentScreenshots(userScs);
-      if (userScs.length > 0) {
-        setStreamViewMode("screenshot");
-      } else {
-        setStreamViewMode("telemetry");
-      }
     } catch (e) {
       setStudentScreenshots([]);
-      setStreamViewMode("telemetry");
     }
 
-    showToast("Live Screen Connected 🖥️", `Streaming workstation of ${student.full_name} (${student.course_name || "Remote Intern"}).`, "success");
+    showToast("Connecting Live Screen 🖥️", `Establishing stream with ${student.full_name} (${student.course_name || "Remote Intern"}).`, "info");
   };
 
   const stopLiveScreenAccess = () => {
@@ -1496,17 +1491,25 @@ export default function InternshipsPage() {
                 {!mediaStream && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/85 p-6 text-center space-y-3">
                     <FaDesktop className="text-4xl text-purple-400 animate-pulse" />
-                    <p className="text-sm font-bold text-white">Direct Live Screen Feed Not Connected</p>
+                    <p className="text-sm font-bold text-white">Connecting to Remote Intern Workstation...</p>
                     <p className="text-xs text-slate-400 max-w-sm">
-                      Click below to initiate a real-time WebRTC display capture or switch to Telemetry view.
+                      Please ensure the intern ({activeRemoteStudent.full_name}) has clicked <strong>&quot;Share Live Screen to Admin&quot;</strong> on their computer dashboard.
                     </p>
-                    <button
-                      type="button"
-                      onClick={handleStartBrowserScreenCapture}
-                      className="px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold rounded-xl shadow-lg transition-all"
-                    >
-                      Connect Live Display Screen 🖥️
-                    </button>
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => startLiveScreenAccess(activeRemoteStudent)}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-lg transition-all cursor-pointer"
+                      >
+                        Reconnect WebRTC Stream 🔄
+                      </button>
+                      <Link
+                        href="/dashboard/remote-monitoring"
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs rounded-xl border border-slate-700 transition-all"
+                      >
+                        Remote Monitoring Hub →
+                      </Link>
+                    </div>
                   </div>
                 )}
               </div>

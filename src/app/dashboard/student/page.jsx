@@ -10,7 +10,7 @@ import { generatePrintableInternshipExperienceCertificatePdf } from "@/lib/gener
 import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
 import { calculate30DayFeeCycles } from "@/lib/studentEnrollmentUtils";
 import { isRecordFromToday, getTodayDateString } from "@/lib/attendanceUtils";
-import { startScreenBroadcast, stopScreenBroadcast } from "@/lib/webrtcScreenService";
+import { startScreenBroadcast, stopScreenBroadcast, WebRTCViewerClient } from "@/lib/webrtcScreenService";
 import {
   FaGraduationCap,
   FaCalendarAlt,
@@ -319,6 +319,10 @@ export default function StudentDedicatedDashboardPage() {
   const adminViewerVideoRef = useRef(null);
   const [screenMediaStream, setScreenMediaStream] = useState(null);
   const [screenAccessModalOpen, setScreenAccessModalOpen] = useState(false);
+  const [remoteViewerStream, setRemoteViewerStream] = useState(null);
+  const [remoteViewerState, setRemoteViewerState] = useState("idle");
+  const [remoteViewerStatus, setRemoteViewerStatus] = useState("");
+  const studentViewerClientRef = useRef(null);
 
   const handleStartScreenShare = async () => {
     try {
@@ -358,6 +362,54 @@ export default function StudentDedicatedDashboardPage() {
     setScreenMediaStream(null);
     setRemoteSessionActive(false);
     showToast("Work Session Ended ⚪", "Screen sharing & session ended.", "info");
+  };
+
+  const handleOpenAdminScreenViewer = () => {
+    setScreenAccessModalOpen(true);
+    if (!isAdminUser) return;
+
+    if (studentViewerClientRef.current) {
+      studentViewerClientRef.current.disconnect();
+      studentViewerClientRef.current = null;
+    }
+
+    const targetKey = (studentInfo?.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
+    if (!targetKey) {
+      setRemoteViewerStatus("Student email not found for live stream.");
+      return;
+    }
+
+    setRemoteViewerState("connecting");
+    setRemoteViewerStatus("Establishing direct WebRTC connection to student screen...");
+
+    const client = new WebRTCViewerClient({
+      userKey: targetKey,
+      onRemoteStream: (stream) => {
+        setRemoteViewerStream(stream);
+        setRemoteViewerState("connected");
+        setRemoteViewerStatus("WebRTC Live Stream Connected 🟢");
+      },
+      onConnectionStateChange: (state) => {
+        setRemoteViewerState(state);
+      },
+      onStatusMessage: (msg) => {
+        setRemoteViewerStatus(msg);
+      },
+    });
+
+    studentViewerClientRef.current = client;
+    client.connect();
+  };
+
+  const handleCloseAdminScreenViewer = () => {
+    if (studentViewerClientRef.current) {
+      studentViewerClientRef.current.disconnect();
+      studentViewerClientRef.current = null;
+    }
+    setRemoteViewerStream(null);
+    setRemoteViewerState("idle");
+    setRemoteViewerStatus("");
+    setScreenAccessModalOpen(false);
   };
 
   const handleSaveProfileAvatar = (newPicUrl) => {
@@ -1542,10 +1594,13 @@ export default function StudentDedicatedDashboardPage() {
               {isAdminUser && (
                 <button
                   type="button"
-                  onClick={() => setScreenAccessModalOpen(true)}
+                  onClick={handleOpenAdminScreenViewer}
                   className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <FaEye />
+                  <span>Access Remote Screen 👁️</span>
+                </button>
+              )}
                   <span>Access Remote Screen 👁️</span>
                 </button>
               )}
@@ -2784,16 +2839,31 @@ export default function StudentDedicatedDashboardPage() {
       {screenAccessModalOpen && (
         <Modal
           isOpen={screenAccessModalOpen}
-          onClose={() => setScreenAccessModalOpen(false)}
+          onClose={handleCloseAdminScreenViewer}
           title={`🖥️ Live Workstation Screen Stream: ${studentInfo.name}`}
         >
           <div className="space-y-4 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-900 text-white rounded-2xl border border-slate-800">
               <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span className="font-bold text-xs text-emerald-300">Live Workstation Broadcast Active</span>
+                <span className={`w-2.5 h-2.5 rounded-full ${
+                  (isAdminUser ? remoteViewerState === "connected" : screenMediaStream)
+                    ? "bg-emerald-400 animate-ping"
+                    : "bg-amber-400 animate-pulse"
+                }`}></span>
+                <span className="font-bold text-xs text-emerald-300">
+                  {isAdminUser
+                    ? remoteViewerState === "connected"
+                      ? "Live Remote Stream Active 🟢"
+                      : remoteViewerState === "connecting"
+                      ? "Connecting Direct WebRTC Stream 🟡"
+                      : "Waiting for Student to Share ⚪"
+                    : "Live Workstation Broadcast Active"}
+                </span>
               </div>
               <div className="flex items-center gap-3 text-[11px] text-slate-300 font-medium">
+                {isAdminUser && remoteViewerStatus && (
+                  <span className="text-cyan-300">{remoteViewerStatus}</span>
+                )}
                 <span>Focus App: <strong className="text-white">{remoteFocusApp}</strong></span>
                 <span>•</span>
                 <span>Session: <strong className="text-cyan-300">{Math.floor(remoteSessionSeconds / 60)} mins</strong></span>
@@ -2801,7 +2871,47 @@ export default function StudentDedicatedDashboardPage() {
             </div>
 
             <div className="relative rounded-2xl overflow-hidden bg-black border-2 border-purple-500/40 aspect-video flex items-center justify-center shadow-2xl">
-              {screenMediaStream ? (
+              {isAdminUser ? (
+                remoteViewerStream ? (
+                  <video
+                    ref={(node) => {
+                      if (node && remoteViewerStream) {
+                        node.srcObject = remoteViewerStream;
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="text-center p-8 space-y-3">
+                    <FaDesktop className="mx-auto h-12 w-12 text-purple-400 animate-pulse" />
+                    <p className="text-sm font-bold text-white">
+                      {remoteViewerState === "connecting"
+                        ? "Connecting to Remote Workstation..."
+                        : "Waiting for Live Screen Broadcast"}
+                    </p>
+                    <p className="text-slate-400 text-xs max-w-sm mx-auto">
+                      Make sure the student has opened their dashboard and clicked <strong>&quot;Share Live Screen to Admin&quot;</strong> on their computer.
+                    </p>
+                    <div className="flex items-center justify-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenAdminScreenViewer}
+                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
+                      >
+                        Retry WebRTC Connection 🔄
+                      </button>
+                      <Link
+                        href="/dashboard/remote-monitoring"
+                        className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs border border-slate-700 transition-all"
+                      >
+                        Open Remote Monitoring Hub →
+                      </Link>
+                    </div>
+                  </div>
+                )
+              ) : screenMediaStream ? (
                 <video
                   ref={(node) => {
                     if (node && screenMediaStream) {
@@ -2817,7 +2927,7 @@ export default function StudentDedicatedDashboardPage() {
                   <FaDesktop className="mx-auto h-12 w-12 text-purple-400 animate-pulse" />
                   <p className="text-sm font-bold text-white">Remote Screen Stream Ready</p>
                   <p className="text-slate-400 text-xs max-w-sm mx-auto">
-                    Click "Share Live Screen to Admin" on the remote workstation to broadcast real-time display and active code editor.
+                    Click &quot;Share Live Screen to Admin&quot; on your device to broadcast your workstation display and code editor in real time.
                   </p>
                 </div>
               )}
@@ -2829,7 +2939,7 @@ export default function StudentDedicatedDashboardPage() {
               </p>
               <button
                 type="button"
-                onClick={() => setScreenAccessModalOpen(false)}
+                onClick={handleCloseAdminScreenViewer}
                 className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-colors cursor-pointer"
               >
                 Close Viewer ✕
