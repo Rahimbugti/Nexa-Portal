@@ -187,7 +187,28 @@ export default function InternshipsPage() {
     }
   }, [mediaStream, streamViewMode, isLiveStreamModalOpen]);
 
-
+  // Realtime listener for snapshots captured by remote student
+  useEffect(() => {
+    const alertChan = supabase.channel("nexa-global-alerts");
+    alertChan
+      .on("broadcast", { event: "snapshot-captured" }, (payload) => {
+        const snap = payload?.payload || payload;
+        if (snap && (snap.imageUrl || snap.screenshot_url)) {
+          setStudentScreenshots((prev) => [snap, ...prev]);
+          setIsLiveStreamModalOpen(false);
+          setSnapshotPreviewModal({
+            isOpen: true,
+            snapshot: snap,
+            student: {
+              full_name: snap.employeeName,
+              course_name: snap.department,
+            },
+          });
+          showToast("Snapshot Received 📸", `Audit snapshot of ${snap.employeeName} received & saved!`, "success");
+        }
+      })
+      .subscribe();
+  }, []);
 
   const captureAuditSnapshot = async () => {
     if (!activeRemoteStudent) return;
@@ -217,48 +238,74 @@ export default function InternshipsPage() {
       } catch (err) {
         console.warn("Could not grab video frame:", err);
       }
+    } else if (remoteLiveFrameUrl) {
+      snapUrl = remoteLiveFrameUrl;
     }
 
-    // 2. If live stream is not yet active in this modal
-    if (!snapUrl) {
-      showToast("Notice ℹ️", "Live student stream must be connected to capture real-time audit frame.", "info");
-      return;
+    if (snapUrl) {
+      const snapshotRecord = {
+        id: `snap-${Date.now()}`,
+        employeeId: activeRemoteStudent.id,
+        employeeName: activeRemoteStudent.full_name,
+        email: activeRemoteStudent.email,
+        department: "Internship & Engineering",
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString(),
+        imageUrl: snapUrl,
+        focusApp: "VS Code (Development)",
+        activityScore: 94,
+      };
+
+      try {
+        await dbSaveRecord("screenshot_logs", snapshotRecord);
+        setStudentScreenshots((prev) => [snapshotRecord, ...prev]);
+      } catch (e) {}
+
+      // Auto-close Screen Stream modal and open Snapshot Preview modal
+      const currentStudent = activeRemoteStudent;
+      setIsLiveStreamModalOpen(false);
+      setSnapshotPreviewModal({
+        isOpen: true,
+        snapshot: snapshotRecord,
+        student: currentStudent,
+      });
+
+      showToast("Snapshot Captured 📸", `High-res audit screenshot of ${currentStudent.full_name}'s workstation saved.`, "success");
+    } else {
+      // 2. Stream not yet active: dispatch instant snapshot notification request to student's screen!
+      const targetEmail = (activeRemoteStudent.email || "").toLowerCase().trim();
+      const snapRequest = {
+        id: `snap-req-${Date.now()}`,
+        type: "snapshot-request",
+        target_email: targetEmail,
+        target_name: activeRemoteStudent.full_name,
+        sender: "Admin Supervision",
+        message: "📸 Admin is requesting an instant audit snapshot of your screen. Click 'Grant & Capture' to send.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toISOString(),
+      };
+
+      try {
+        const notifChannel = supabase.channel("nexa-global-alerts");
+        await notifChannel.subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            notifChannel.send({
+              type: "broadcast",
+              event: "snapshot-request",
+              payload: snapRequest,
+            });
+            notifChannel.send({
+              type: "broadcast",
+              event: "ping",
+              payload: snapRequest,
+            });
+          }
+        });
+      } catch (e) {}
+
+      showToast("Snapshot Alert Dispatched 📸", `Instant capture request sent to ${activeRemoteStudent.full_name}'s device!`, "info");
     }
-
-    if (!snapUrl) {
-      showToast("Notice ℹ️", "Please select your screen to capture a real high-res audit snapshot.", "info");
-      return;
-    }
-
-    const snapshotRecord = {
-      id: `snap-${Date.now()}`,
-      employeeId: activeRemoteStudent.id,
-      employeeName: activeRemoteStudent.full_name,
-      email: activeRemoteStudent.email,
-      department: "Internship & Engineering",
-      timestamp: new Date().toISOString(),
-      date: new Date().toLocaleDateString(),
-      time: new Date().toLocaleTimeString(),
-      imageUrl: snapUrl,
-      focusApp: "VS Code (Development)",
-      activityScore: 94,
-    };
-
-    try {
-      await dbSaveRecord("screenshot_logs", snapshotRecord);
-      setStudentScreenshots((prev) => [snapshotRecord, ...prev]);
-    } catch (e) {}
-
-    // Auto-close Screen Stream modal and open Snapshot Preview modal
-    const currentStudent = activeRemoteStudent;
-    setIsLiveStreamModalOpen(false);
-    setSnapshotPreviewModal({
-      isOpen: true,
-      snapshot: snapshotRecord,
-      student: currentStudent,
-    });
-
-    showToast("Snapshot Captured 📸", `High-res audit screenshot of ${currentStudent.full_name}'s workstation saved.`, "success");
   };
 
   const handlePingIntern = async () => {

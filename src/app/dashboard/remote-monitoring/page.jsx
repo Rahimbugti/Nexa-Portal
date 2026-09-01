@@ -535,7 +535,7 @@ export default function RemoteMonitoringPage() {
     }
   };
 
-  // Capture Audit Snapshot directly from Viewer Video Frame
+  // Capture Audit Snapshot directly from Viewer Video Frame or dispatch snapshot request
   const handleCaptureViewerSnapshot = async () => {
     if (!liveViewerModal.user) return;
     const v = viewerVideoRef.current;
@@ -563,6 +563,8 @@ export default function RemoteMonitoringPage() {
       } catch (e) {
         console.warn("Could not grab video frame:", e);
       }
+    } else if (liveViewerModal.frameUrl) {
+      snapUrl = liveViewerModal.frameUrl;
     }
 
     if (snapUrl) {
@@ -572,6 +574,7 @@ export default function RemoteMonitoringPage() {
         employee_name: liveViewerModal.user.name,
         department: liveViewerModal.user.department || "Engineering",
         screenshot_url: snapUrl,
+        imageUrl: snapUrl,
         captured_app: "VS Code / Entire Desktop",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         date: new Date().toISOString().split("T")[0],
@@ -587,7 +590,38 @@ export default function RemoteMonitoringPage() {
       setScreenshots((prev) => [snapRecord, ...prev]);
       showToast("Snapshot Captured 📸", `High-res audit screenshot of ${liveViewerModal.user.name} saved.`, "success");
     } else {
-      showToast("Notice ℹ️", "Unable to capture frame while stream is not fully connected.", "info");
+      // Dispatch real-time snapshot request alert to remote user
+      const targetEmail = (liveViewerModal.user.email || "").toLowerCase().trim();
+      const snapRequest = {
+        id: `snap-req-${Date.now()}`,
+        type: "snapshot-request",
+        target_email: targetEmail,
+        target_name: liveViewerModal.user.name,
+        sender: "Admin Supervision",
+        message: "📸 Admin is requesting an instant audit snapshot of your screen. Click 'Grant & Capture' to send.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toISOString(),
+      };
+
+      try {
+        const notifChannel = supabase.channel("nexa-global-alerts");
+        await notifChannel.subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            notifChannel.send({
+              type: "broadcast",
+              event: "snapshot-request",
+              payload: snapRequest,
+            });
+            notifChannel.send({
+              type: "broadcast",
+              event: "ping",
+              payload: snapRequest,
+            });
+          }
+        });
+      } catch (e) {}
+
+      showToast("Snapshot Request Dispatched 📸", `Instant capture alert sent to ${liveViewerModal.user.name}'s device!`, "info");
     }
   };
 

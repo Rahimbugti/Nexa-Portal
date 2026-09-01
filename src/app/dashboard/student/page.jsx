@@ -335,6 +335,88 @@ export default function StudentDedicatedDashboardPage() {
     await handleStartScreenShare();
   };
 
+  const handleCaptureAndSendSnapshot = async () => {
+    try {
+      const sEmail = (studentInfo?.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
+      const sName = studentInfo?.name || localStorage.getItem("current_user_name") || "Student";
+
+      let stream = screenMediaStream;
+      let ownStreamCreated = false;
+
+      if (!stream) {
+        if (typeof window === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
+          showToast("Notice ℹ️", "Screen capture API not supported.", "info");
+          return;
+        }
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: "always", displaySurface: "monitor" },
+          audio: false,
+        });
+        ownStreamCreated = true;
+      }
+
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 1920;
+      canvas.height = video.videoHeight || 1080;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+      ctx.fillRect(16, canvas.height - 48, 560, 36);
+      ctx.fillStyle = "#38bdf8";
+      ctx.font = "bold 13px sans-serif";
+      ctx.fillText(
+        `NEXA AUDIT SNAPSHOT • ${sName} • ${new Date().toLocaleTimeString()}`,
+        26,
+        canvas.height - 25
+      );
+
+      const snapUrl = canvas.toDataURL("image/webp", 0.9);
+
+      const snapRecord = {
+        id: `snap-${Date.now()}`,
+        employeeId: studentInfo?.id || sEmail,
+        employeeName: sName,
+        email: sEmail,
+        department: studentInfo?.course || "Engineering Track",
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        imageUrl: snapUrl,
+        screenshot_url: snapUrl,
+        focusApp: "Active Workstation Display",
+        activityScore: 95,
+      };
+
+      await dbSaveRecord("screenshot_logs", snapRecord);
+
+      const alertChannel = supabase.channel("nexa-global-alerts");
+      alertChannel.send({
+        type: "broadcast",
+        event: "snapshot-captured",
+        payload: snapRecord,
+      });
+
+      if (ownStreamCreated) {
+        setScreenMediaStream(stream);
+        setRemoteSessionActive(true);
+        if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+      }
+
+      setIncomingSupervisionModal({ isOpen: false, ping: null });
+      showToast("Snapshot Sent 📸", "Workstation audit snapshot dispatched to Admin!", "success");
+    } catch (err) {
+      console.warn("Snapshot capture error:", err);
+      showToast("Notice ℹ️", "Screen capture permission was not granted.", "info");
+    }
+  };
+
   const handleStartScreenShare = async () => {
     try {
       const sEmail = (studentInfo?.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
@@ -2996,21 +3078,32 @@ export default function StudentDedicatedDashboardPage() {
         </Modal>
       )}
 
-      {/* === INTERACTIVE ADMIN SUPERVISION REQUEST POPUP MODAL === */}
+      {/* === INTERACTIVE ADMIN SUPERVISION / SNAPSHOT REQUEST POPUP MODAL === */}
       {incomingSupervisionModal.isOpen && (
         <Modal
           isOpen={incomingSupervisionModal.isOpen}
           onClose={() => setIncomingSupervisionModal({ isOpen: false, ping: null })}
-          title="🚨 Live Screen Supervision Request"
+          title={
+            incomingSupervisionModal.ping?.type === "snapshot-request" ||
+            incomingSupervisionModal.ping?.message?.toLowerCase().includes("snapshot")
+              ? "📸 Live Screen Audit Snapshot Request"
+              : "🚨 Live Screen Supervision Request"
+          }
         >
           <div className="p-2 space-y-4 text-center">
             <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center text-3xl mx-auto shadow-xl shadow-purple-500/30 animate-bounce">
-              🖥️
+              {incomingSupervisionModal.ping?.type === "snapshot-request" ||
+              incomingSupervisionModal.ping?.message?.toLowerCase().includes("snapshot")
+                ? "📸"
+                : "🖥️"}
             </div>
 
             <div className="space-y-1.5">
               <h3 className="text-base font-extrabold text-slate-900">
-                Admin Supervision Request Received
+                {incomingSupervisionModal.ping?.type === "snapshot-request" ||
+                incomingSupervisionModal.ping?.message?.toLowerCase().includes("snapshot")
+                  ? "Admin Screen Audit Snapshot Request"
+                  : "Admin Supervision Request Received"}
               </h3>
               <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
                 {incomingSupervisionModal.ping?.message ||
@@ -3032,13 +3125,24 @@ export default function StudentDedicatedDashboardPage() {
                 Later / Dismiss
               </button>
 
-              <button
-                type="button"
-                onClick={handleAcceptSupervisionRequest}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/30 transition-all cursor-pointer flex items-center gap-2"
-              >
-                <span>Accept &amp; Start Sharing Screen 🖥️</span>
-              </button>
+              {incomingSupervisionModal.ping?.type === "snapshot-request" ||
+              incomingSupervisionModal.ping?.message?.toLowerCase().includes("snapshot") ? (
+                <button
+                  type="button"
+                  onClick={handleCaptureAndSendSnapshot}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-extrabold text-xs shadow-lg shadow-purple-500/30 transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <span>Grant &amp; Capture Snapshot 📸</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleAcceptSupervisionRequest}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/30 transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <span>Accept &amp; Start Sharing Screen 🖥️</span>
+                </button>
+              )}
             </div>
           </div>
         </Modal>
