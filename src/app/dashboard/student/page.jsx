@@ -323,7 +323,16 @@ export default function StudentDedicatedDashboardPage() {
   const [remoteViewerStream, setRemoteViewerStream] = useState(null);
   const [remoteViewerState, setRemoteViewerState] = useState("idle");
   const [remoteViewerStatus, setRemoteViewerStatus] = useState("");
+  const [incomingSupervisionModal, setIncomingSupervisionModal] = useState({
+    isOpen: false,
+    ping: null,
+  });
   const studentViewerClientRef = useRef(null);
+
+  const handleAcceptSupervisionRequest = async () => {
+    setIncomingSupervisionModal({ isOpen: false, ping: null });
+    await handleStartScreenShare();
+  };
 
   const handleStartScreenShare = async () => {
     try {
@@ -462,6 +471,7 @@ export default function StudentDedicatedDashboardPage() {
             (!latestPing.target_email || latestPing.target_email === myEmail || myEmail.includes(latestPing.target_email))
           ) {
             showToast("⚡ Admin Ping Received", latestPing.message, "info");
+            setIncomingSupervisionModal({ isOpen: true, ping: latestPing });
           }
         }
       } catch (e) {}
@@ -480,6 +490,7 @@ export default function StudentDedicatedDashboardPage() {
           (!pingData.target_email || pingData.target_email === myEmail || myEmail.includes(pingData.target_email))
         ) {
           showToast("🔔 Admin Supervision Alert", pingData.message || "Admin is reviewing your workstation.", "warning");
+          setIncomingSupervisionModal({ isOpen: true, ping: pingData });
         }
       })
       .subscribe();
@@ -2959,6 +2970,54 @@ export default function StudentDedicatedDashboardPage() {
                 className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-colors cursor-pointer"
               >
                 Close Viewer ✕
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* === INTERACTIVE ADMIN SUPERVISION REQUEST POPUP MODAL === */}
+      {incomingSupervisionModal.isOpen && (
+        <Modal
+          isOpen={incomingSupervisionModal.isOpen}
+          onClose={() => setIncomingSupervisionModal({ isOpen: false, ping: null })}
+          title="🚨 Live Screen Supervision Request"
+        >
+          <div className="p-2 space-y-4 text-center">
+            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center text-3xl mx-auto shadow-xl shadow-purple-500/30 animate-bounce">
+              🖥️
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-base font-extrabold text-slate-900">
+                Admin Supervision Request Received
+              </h3>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                {incomingSupervisionModal.ping?.message ||
+                  "Admin is requesting live screen access to review your active internship deliverables and code editor."}
+              </p>
+            </div>
+
+            <div className="p-3 bg-purple-50 border border-purple-200 rounded-2xl text-xs text-purple-900 flex items-center justify-center gap-2 font-medium">
+              <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping"></span>
+              <span>Click the button below and select <strong>&quot;Entire Screen&quot;</strong> in the browser prompt.</span>
+            </div>
+
+            <div className="flex items-center justify-center gap-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIncomingSupervisionModal({ isOpen: false, ping: null })}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+              >
+                Later / Dismiss
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAcceptSupervisionRequest}
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/30 transition-all cursor-pointer flex items-center gap-2"
+              >
+                <span>Accept &amp; Start Sharing Screen 🖥️</span>
               </button>
             </div>
           </div>
