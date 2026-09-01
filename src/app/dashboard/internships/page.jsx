@@ -181,34 +181,7 @@ export default function InternshipsPage() {
     }
   }, [mediaStream, streamViewMode, isLiveStreamModalOpen]);
 
-  const handleStartBrowserScreenCapture = async () => {
-    if (typeof navigator !== "undefined" && navigator.mediaDevices?.getDisplayMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { cursor: "always" },
-          audio: false,
-        });
-        setMediaStream(stream);
-        setStreamViewMode("live_stream");
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(() => {});
-        }
-
-        stream.getVideoTracks()[0].onended = () => {
-          setMediaStream(null);
-          setStreamViewMode("telemetry");
-          showToast("Screen Share Ended ℹ️", "Live desktop stream closed.", "info");
-        };
-        showToast("Direct Screen Stream Active 🖥️", "Real-time workstation display connected.", "success");
-      } catch (err) {
-        console.warn("Screen share request cancelled or error:", err);
-      }
-    } else {
-      showToast("Notice ℹ️", "Screen capture is not supported in this browser context.", "info");
-    }
-  };
 
   const captureAuditSnapshot = async () => {
     if (!activeRemoteStudent) return;
@@ -240,42 +213,10 @@ export default function InternshipsPage() {
       }
     }
 
-    // 2. If live stream is not yet active in this modal, prompt for real screen capture directly
+    // 2. If live stream is not yet active in this modal
     if (!snapUrl) {
-      if (typeof navigator !== "undefined" && navigator.mediaDevices?.getDisplayMedia) {
-        try {
-          const directStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { cursor: "always" },
-            audio: false,
-          });
-          const video = document.createElement("video");
-          video.srcObject = directStream;
-          video.muted = true;
-          await video.play();
-
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 1920;
-          canvas.height = video.videoHeight || 1080;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          // Stamp Official Security Watermark
-          ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-          ctx.fillRect(16, canvas.height - 48, 560, 36);
-          ctx.fillStyle = "#38bdf8";
-          ctx.font = "bold 13px sans-serif";
-          ctx.fillText(
-            `NEXA REAL AUDIT • ${activeRemoteStudent.full_name} • ${new Date().toLocaleTimeString()}`,
-            26,
-            canvas.height - 25
-          );
-
-          snapUrl = canvas.toDataURL("image/webp", 0.92);
-          directStream.getTracks().forEach((track) => track.stop());
-        } catch (e) {
-          console.warn("Live screen grab cancelled:", e);
-        }
-      }
+      showToast("Notice ℹ️", "Live student stream must be connected to capture real-time audit frame.", "info");
+      return;
     }
 
     if (!snapUrl) {
@@ -1625,11 +1566,11 @@ export default function InternshipsPage() {
 
                 <button
                   type="button"
-                  onClick={handleStartBrowserScreenCapture}
+                  onClick={() => startLiveScreenAccess(activeRemoteStudent)}
                   className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span>🎥</span>
-                  <span>Live Desktop Picker</span>
+                  <span>🔄</span>
+                  <span>Refresh Stream</span>
                 </button>
 
                 <button
