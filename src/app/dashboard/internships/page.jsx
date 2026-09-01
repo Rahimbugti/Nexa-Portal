@@ -1443,11 +1443,6 @@ export default function InternshipsPage() {
             {/* Display Area Based on streamViewMode */}
             {streamViewMode === "live_stream" && (
               <div className="rounded-2xl overflow-hidden bg-black text-white border-2 border-purple-500/40 shadow-2xl relative min-h-64 flex flex-col items-center justify-center p-2">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
                 {mediaStream ? (
                   <video
                     ref={videoRef}
