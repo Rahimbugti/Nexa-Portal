@@ -212,16 +212,16 @@ export default function AdminAttendanceHistoryHub() {
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Load All System Data
+  // Load All System Data with Fresh Live Database Fetch
   const loadAllAttendanceHubData = async () => {
     setLoading(true);
     try {
       const [stuRes, internRes, empRes, attRes, leaveRes] = await Promise.all([
-        dbFetch("students").catch(() => []),
-        dbFetch("interns").catch(() => []),
-        dbFetch("employees").catch(() => []),
-        dbFetch("attendance").catch(() => []),
-        dbFetch("leaves").catch(() => [])
+        dbFetch("students", [], true).catch(() => []),
+        dbFetch("interns", [], true).catch(() => []),
+        dbFetch("employees", [], true).catch(() => []),
+        dbFetch("attendance", [], true).catch(() => []),
+        dbFetch("leaves", [], true).catch(() => [])
       ]);
 
       setMasterLogs(attRes || []);
@@ -282,15 +282,46 @@ export default function AdminAttendanceHistoryHub() {
       const userList = Array.from(userMap.values());
       setAllUsersList(userList);
 
-      // Select first user by default (prefer student/intern like Rahim Bugti)
+      // Select first user in active list
       if (userList.length > 0) {
-        const defaultUser = userList.find(u => u.name.toLowerCase().includes("rahim") || u.email.toLowerCase().includes("rahim")) || userList[0];
-        selectTargetUser(defaultUser, attRes, leaveRes);
+        selectTargetUser(userList[0], attRes, leaveRes);
+      } else {
+        setSelectedUser(null);
+        setUserCalendar([]);
       }
     } catch (e) {
       console.error("Failed to load attendance hub data:", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePermanentDeleteCandidate = async (candidate) => {
+    if (!candidate || !confirm(`Permanently delete all attendance records and registration profile for "${candidate.name}" (${candidate.email})?`)) {
+      return;
+    }
+
+    const email = candidate.email.toLowerCase().trim();
+    const id = candidate.id;
+    const name = candidate.name;
+
+    try {
+      await dbDeleteRecord("students", id, email).catch(() => {});
+      await dbDeleteRecord("interns", id, email).catch(() => {});
+      await dbDeleteRecord("employees", id, email).catch(() => {});
+
+      if (typeof fetch !== "undefined") {
+        await fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: "students", record: { id, email, full_name: name }, action: "delete" })
+        }).catch(() => {});
+      }
+
+      showToast("Candidate Deleted 🗑️", `All attendance records for ${name} removed permanently.`, "info");
+      loadAllAttendanceHubData();
+    } catch (e) {
+      showToast("Error 🛑", "Failed to delete candidate.", "error");
     }
   };
 
@@ -642,10 +673,21 @@ export default function AdminAttendanceHistoryHub() {
                     </div>
                   </div>
 
-                  <div className="text-right sm:border-l sm:border-white/10 sm:pl-6">
-                    <p className="text-[11px] text-blue-200 uppercase font-semibold">Working Days Attendance</p>
-                    <p className="text-3xl font-extrabold text-emerald-400 mt-0.5">{attendanceRate}%</p>
-                    <p className="text-[10px] text-slate-300">Shift: 10:00 AM - 06:00 PM</p>
+                  <div className="flex flex-col sm:items-end gap-2 text-right sm:border-l sm:border-white/10 sm:pl-6">
+                    <div>
+                      <p className="text-[11px] text-blue-200 uppercase font-semibold">Working Days Attendance</p>
+                      <p className="text-3xl font-extrabold text-emerald-400 mt-0.5">{attendanceRate}%</p>
+                    </div>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handlePermanentDeleteCandidate(selectedUser)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-rose-400/30"
+                      >
+                        <FaTrashAlt className="text-[10px]" />
+                        <span>Purge Candidate 🗑️</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
