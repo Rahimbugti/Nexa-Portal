@@ -263,19 +263,23 @@ export async function POST(request) {
         const targetEmail = (record.user_email || record.email || record.student_id || record.employee_id || "").toLowerCase().trim();
         const targetName = (record.user_name || record.name || record.full_name || record.employee_name || "").trim();
 
+        // In Supabase, attendance.employee_id has a foreign key to employees(id).
+        // Ensure a valid employee record exists for this candidate so the foreign key is always satisfied.
         if (targetEmail) {
           const { data: empData } = await supabase.from("employees").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
           if (empData && empData[0]) {
             empUuid = empData[0].id;
           } else {
-            const { data: stuData } = await supabase.from("students").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
-            if (stuData && stuData[0]) {
-              empUuid = stuData[0].id;
-            } else {
-              const { data: intData } = await supabase.from("interns").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
-              if (intData && intData[0]) {
-                empUuid = intData[0].id;
-              }
+            const { data: createdEmp } = await supabase.from("employees").insert([{
+              full_name: targetName || targetEmail.split("@")[0],
+              email: targetEmail,
+              department: "Software Engineering",
+              designation: "Member",
+              employment_type: "Remote Member",
+              status: "active"
+            }]).select("id").catch(() => ({ data: [] }));
+            if (createdEmp && createdEmp[0]) {
+              empUuid = createdEmp[0].id;
             }
           }
         }
@@ -284,41 +288,10 @@ export async function POST(request) {
           const { data: empNameData } = await supabase.from("employees").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
           if (empNameData && empNameData[0]) {
             empUuid = empNameData[0].id;
-          } else {
-            const { data: stuNameData } = await supabase.from("students").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
-            if (stuNameData && stuNameData[0]) {
-              empUuid = stuNameData[0].id;
-            } else {
-              const { data: intNameData } = await supabase.from("interns").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
-              if (intNameData && intNameData[0]) {
-                empUuid = intNameData[0].id;
-              }
-            }
           }
         }
 
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let isRealUuid = empUuid && uuidRegex.test(String(empUuid));
-
-        // If not a valid UUID or not present in DB, ensure an employee row exists to satisfy foreign keys
-        if (!isRealUuid && targetEmail) {
-          try {
-            const { data: createdEmp } = await supabase.from("employees").insert([{
-              full_name: targetName || targetEmail.split("@")[0],
-              email: targetEmail,
-              department: "General",
-              designation: "Member",
-              employment_type: "Remote Member",
-              status: "active"
-            }]).select("id");
-            if (createdEmp && createdEmp[0] && createdEmp[0].id) {
-              empUuid = createdEmp[0].id;
-              isRealUuid = true;
-            }
-          } catch (e) {}
-        }
-
-        if (!isRealUuid) {
+        if (!empUuid) {
           try {
             const { data: anyEmp } = await supabase.from("employees").select("id").limit(1);
             if (anyEmp && anyEmp[0] && anyEmp[0].id) {
