@@ -156,11 +156,14 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
     const itemEmail = String(item.email || item.student_email || item.assigned_to_email || "").toLowerCase().trim();
     const itemName = String(item.full_name || item.name || item.title || item.employee_name || "").toLowerCase().trim();
 
-    return (
-      (itemId && deletedBlacklist.has(itemId)) ||
-      (itemEmail && deletedBlacklist.has(itemEmail)) ||
-      (itemName && deletedBlacklist.has(itemName))
-    );
+    for (let b of deletedBlacklist) {
+      if (!b) continue;
+      const bClean = String(b).toLowerCase().trim();
+      if (itemId && (itemId === bClean || itemId.includes(bClean) || bClean.includes(itemId))) return true;
+      if (itemEmail && (itemEmail === bClean || itemEmail.includes(bClean) || bClean.includes(itemEmail))) return true;
+      if (itemName && itemName.length >= 3 && (itemName === bClean || itemName.includes(bClean) || bClean.includes(itemName))) return true;
+    }
+    return false;
   };
 
   // 1. Load Database Data via Server Persistence Proxy API (Database is Single Source of Truth)

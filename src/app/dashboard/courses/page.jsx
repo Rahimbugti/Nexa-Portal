@@ -604,14 +604,26 @@ export default function CoursesPage() {
     try {
       const filtered = students.filter((s) => s.id !== id && (email ? (s.email || "").toLowerCase().trim() !== email : true));
       setStudents(filtered);
-      dbDeleteRecord("students", id, email || "").catch(() => {});
-      dbDeleteRecord("interns", id, email || "").catch(() => {});
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("persistent_courses", JSON.stringify(filtered));
+        const blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+        if (email && !blacklist.includes(email)) {
+          blacklist.push(email);
+          localStorage.setItem("deleted_entity_blacklist", JSON.stringify(blacklist));
+        }
+      }
+
+      await dbDeleteRecord("students", id, email || "").catch(() => {});
+      await dbDeleteRecord("interns", id, email || "").catch(() => {});
       
-      fetch("/api/persistence", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "students", record: { id, email, full_name: name }, action: "delete" })
-      }).catch(() => {});
+      if (typeof fetch !== "undefined") {
+        await fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: "students", record: { id, email, full_name: name }, action: "delete" })
+        }).catch(() => {});
+      }
 
       // Clean up local system user registration caches
       if (email) {

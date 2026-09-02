@@ -162,24 +162,24 @@ export async function POST(request) {
         if (!error) deleted = true;
       }
 
-      // Try deleting by email across table and related tables
+      // Try deleting by email across table and related tables with case-insensitive matching
       if (cleanEmail) {
-        await supabase.from(table).delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from(table).delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
         deleted = true;
 
         // Cascade permanent purge across ALL tables for this email
-        await supabase.from("students").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("interns").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("employees").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("app_users").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("payrolls").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("performances").delete().eq("email", cleanEmail).catch(() => {});
-        await supabase.from("monitoring_sessions").delete().eq("user_email", cleanEmail).catch(() => {});
-        await supabase.from("attendance").delete().or(`user_email.eq.${cleanEmail},email.eq.${cleanEmail},student_id.eq.${cleanEmail}`).catch(() => {});
-        await supabase.from("daily_tasks").delete().or(`assigned_to_email.eq.${cleanEmail},email.eq.${cleanEmail}`).catch(() => {});
-        await supabase.from("leaves").delete().or(`applicant_email.eq.${cleanEmail},email.eq.${cleanEmail}`).catch(() => {});
-        await supabase.from("screenshot_logs").delete().or(`email.eq.${cleanEmail},employeeId.eq.${cleanEmail}`).catch(() => {});
-        await supabase.from("activity_logs").delete().or(`email.eq.${cleanEmail},employeeId.eq.${cleanEmail}`).catch(() => {});
+        await supabase.from("students").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("interns").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("employees").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("app_users").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("payrolls").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("performances").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("monitoring_sessions").delete().ilike("user_email", `%${cleanEmail}%`).catch(() => {});
+        await supabase.from("attendance").delete().or(`user_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%,student_id.ilike.%${cleanEmail}%`).catch(() => {});
+        await supabase.from("daily_tasks").delete().or(`assigned_to_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%`).catch(() => {});
+        await supabase.from("leaves").delete().or(`applicant_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%`).catch(() => {});
+        await supabase.from("screenshot_logs").delete().or(`email.ilike.%${cleanEmail}%,employeeId.ilike.%${cleanEmail}%`).catch(() => {});
+        await supabase.from("activity_logs").delete().or(`email.ilike.%${cleanEmail}%,employeeId.ilike.%${cleanEmail}%`).catch(() => {});
       }
 
       // Try deleting by full_name or name if provided
