@@ -76,37 +76,44 @@ export async function GET(request) {
     if (table === "attendance" && Array.isArray(data)) {
       try {
         const [allEmps, allStudents, allInterns] = await Promise.all([
-          supabase.from("employees").select("id, full_name, email").then(r => r.data || []),
-          supabase.from("students").select("id, full_name, email").then(r => r.data || []),
-          supabase.from("interns").select("id, full_name, email").then(r => r.data || []),
+          supabase.from("employees").select("id, full_name, email").then(r => r.data || []).catch(() => []),
+          supabase.from("students").select("id, full_name, email").then(r => r.data || []).catch(() => []),
+          supabase.from("interns").select("id, full_name, email").then(r => r.data || []).catch(() => []),
         ]);
 
         const userMap = new Map();
         [...allEmps, ...allStudents, ...allInterns].forEach(u => {
-          if (u.id) userMap.set(String(u.id).toLowerCase(), u);
+          if (!u) return;
+          if (u.id) userMap.set(String(u.id).toLowerCase().trim(), u);
           if (u.email) userMap.set(u.email.toLowerCase().trim(), u);
+          if (u.enrollment_no) userMap.set(String(u.enrollment_no).toLowerCase().trim(), u);
+          if (u.full_name) userMap.set(u.full_name.toLowerCase().trim(), u);
+          if (u.name) userMap.set(u.name.toLowerCase().trim(), u);
         });
 
         data = data.map(item => {
-          const empIdStr = String(item.employee_id || item.user_email || item.email || "").toLowerCase().trim();
-          const user = userMap.get(empIdStr) || userMap.get(String(item.id || "").toLowerCase());
-          const email = user?.email || (empIdStr.includes("@") ? empIdStr : "member@nexa.com");
-          const name = user?.full_name || item.name || item.user_name || "";
+          const empIdStr = String(item.employee_id || item.student_id || item.user_email || item.user_id || item.email || "").toLowerCase().trim();
+          const user = userMap.get(empIdStr) || 
+                       userMap.get(String(item.id || "").toLowerCase().trim()) || 
+                       (item.user_name ? userMap.get(String(item.user_name).toLowerCase().trim()) : null) || 
+                       (item.name ? userMap.get(String(item.name).toLowerCase().trim()) : null);
+          const email = user?.email || (empIdStr.includes("@") ? empIdStr : (item.user_email || item.student_id || item.email || ""));
+          const name = user?.full_name || user?.name || item.name || item.user_name || item.employee_name || (email ? email.split("@")[0] : "Member");
           return {
             id: item.id,
-            employee_id: email,
-            user_email: email,
-            email: email,
+            employee_id: email || empIdStr,
+            user_email: email || empIdStr,
+            email: email || empIdStr,
             user_name: name,
             name: name,
-            attendance_date: item.date,
-            date: item.date,
-            check_in_time: item.check_in ? convertTo12HourTime(item.check_in) : "--:--",
-            check_out_time: item.check_out ? convertTo12HourTime(item.check_out) : "Not Checked Out",
-            attendance_status: item.status || (item.check_out ? "Present (Completed)" : "Present (On Time)"),
-            status: item.status,
-            public_ip: item.ip_address || "127.0.0.1",
-            timestamp: `${item.date}T${item.check_in || "00:00:00"}`
+            attendance_date: item.date || item.attendance_date,
+            date: item.date || item.attendance_date,
+            check_in_time: item.check_in ? convertTo12HourTime(item.check_in) : (item.check_in_time || "--:--"),
+            check_out_time: item.check_out ? convertTo12HourTime(item.check_out) : (item.check_out_time || "Not Checked Out"),
+            attendance_status: item.status || item.attendance_status || (item.check_out ? "Present (Completed)" : "Present (On Time)"),
+            status: item.status || item.attendance_status,
+            public_ip: item.ip_address || item.public_ip || "127.0.0.1",
+            timestamp: item.timestamp || `${item.date || item.attendance_date || new Date().toISOString().split("T")[0]}T${item.check_in || "00:00:00"}`
           };
         });
       } catch (e) { }
