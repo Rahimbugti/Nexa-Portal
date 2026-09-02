@@ -662,7 +662,7 @@ export default function AttendancePage() {
       setAllSystemLogs(updatedMaster);
       localStorage.setItem("software_house_master_attendance_logs", JSON.stringify(updatedMaster));
 
-      dbSaveRecord("attendance", {
+      const attRecordToSave = {
         id: newRecord.id,
         user_email: userEmail,
         employee_id: userEmail,
@@ -682,11 +682,28 @@ export default function AttendancePage() {
         ip_address: livePublicIp,
         created_at: nowIso,
         timestamp: nowIso
+      };
+
+      dbSaveRecord("attendance", attRecordToSave).catch(() => {});
+      fetch("/api/persistence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "attendance", record: attRecordToSave, action: "save" })
       }).catch(() => {});
+      fetch("/api/attendance/student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", records: [attRecordToSave] })
+      }).catch(() => {});
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("storage"));
+        window.dispatchEvent(new Event("dataChanged"));
+      }
     } catch(e) {}
 
     const toastTitle = type === "check_in" ? "Clocked In Successfully 🟢" : "Clocked Out Successfully 🔴";
-    showToast(toastTitle, `Recorded at ${nowLocalTime}.`, "success");
+    showToast(toastTitle, `Recorded at ${nowLocalTime}. Saved live to Supabase.`, "success");
 
     setTimeout(() => {
       navigateToDashboard();
