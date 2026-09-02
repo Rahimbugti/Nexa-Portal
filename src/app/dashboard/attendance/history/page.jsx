@@ -40,23 +40,43 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  // If user registered recently (e.g. today or this week), start calendar strictly from their registration date!
-  const cleanStartDateStr = startDate ? String(startDate).slice(0, 10) : todayStr;
-  const sDate = new Date(cleanStartDateStr);
-  const eDate = new Date();
-  
-  // Set effective start date strictly to candidate's joining/registration date
-  const effectiveStartDate = (isNaN(sDate.getTime()) || sDate > eDate) ? new Date(todayStr) : sDate;
+  // Find earliest actual log date if any
+  let earliestLogDate = null;
+  if (Array.isArray(rawLogs) && rawLogs.length > 0) {
+    const validDates = rawLogs
+      .map((l) => (l.attendance_date || l.date || (l.timestamp ? l.timestamp.split("T")[0] : "")).slice(0, 10))
+      .filter((d) => d && d <= todayStr)
+      .sort();
+    if (validDates.length > 0) {
+      earliestLogDate = validDates[0];
+    }
+  }
+
+  // Clean user's registration/start date
+  let cleanStartDateStr = startDate ? String(startDate).slice(0, 10) : todayStr;
+  if (!cleanStartDateStr || cleanStartDateStr === "2026-06-01" || cleanStartDateStr === "2026-05-01" || cleanStartDateStr === "2026-08-01") {
+    cleanStartDateStr = earliestLogDate || todayStr;
+  }
 
   const calendar = [];
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  for (let d = new Date(eDate); d >= effectiveStartDate; d.setDate(d.getDate() - 1)) {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const dayNum = String(d.getDate()).padStart(2, "0");
+  // Step backwards from today strictly down to registration date
+  let currDate = new Date();
+  let safetyLimit = 365;
+
+  while (safetyLimit > 0) {
+    safetyLimit--;
+    const year = currDate.getFullYear();
+    const month = String(currDate.getMonth() + 1).padStart(2, "0");
+    const dayNum = String(currDate.getDate()).padStart(2, "0");
     const dateStr = `${year}-${month}-${dayNum}`;
-    const dayOfWeek = d.getDay(); // 0 = Sunday
+
+    if (dateStr < cleanStartDateStr) {
+      break; // Reached registration day — STOP! No older fake attendance entries!
+    }
+
+    const dayOfWeek = currDate.getDay(); // 0 = Sunday
     const dayName = dayNames[dayOfWeek];
 
     // 1. Check rawLogs
@@ -158,6 +178,7 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
         is_absent: true,
       });
     }
+    currDate.setDate(currDate.getDate() - 1);
   }
 
   return calendar;
@@ -230,7 +251,7 @@ export default function AdminAttendanceHistoryHub() {
           type: "student",
           category: isIntern ? "Remote Internship" : "Course Student",
           department: s.course_name || s.course || "Development",
-          startDate: s.admission_date || s.start_date || s.enrollment_date || "2026-06-01",
+          startDate: s.admission_date || s.start_date || s.enrollment_date || s.created_at || getTodayDateString(),
           avatar: s.profile_photo || null,
         });
       });
@@ -246,7 +267,7 @@ export default function AdminAttendanceHistoryHub() {
           type: "student",
           category: "Remote Internship",
           department: i.tech_domain || i.domain || "AI & Software Engineering",
-          startDate: i.start_date || "2026-06-01",
+          startDate: i.start_date || i.admission_date || i.created_at || getTodayDateString(),
           avatar: i.avatar || null,
         });
       });
@@ -262,7 +283,7 @@ export default function AdminAttendanceHistoryHub() {
           type: "employee",
           category: e.designation || "Staff Member",
           department: e.department || "Engineering",
-          startDate: e.joining_date || "2026-05-01",
+          startDate: e.joining_date || e.start_date || e.created_at || getTodayDateString(),
           avatar: e.profile_photo || null,
         });
       });
