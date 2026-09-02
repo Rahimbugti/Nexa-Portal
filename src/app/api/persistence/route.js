@@ -297,8 +297,34 @@ export async function POST(request) {
           }
         }
 
-        if (!empUuid) {
-          empUuid = targetEmail || `user-${Date.now()}`;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        let isRealUuid = empUuid && uuidRegex.test(String(empUuid));
+
+        // If not a valid UUID or not present in DB, ensure an employee row exists to satisfy foreign keys
+        if (!isRealUuid && targetEmail) {
+          try {
+            const { data: createdEmp } = await supabase.from("employees").insert([{
+              full_name: targetName || targetEmail.split("@")[0],
+              email: targetEmail,
+              department: "General",
+              designation: "Member",
+              employment_type: "Remote Member",
+              status: "active"
+            }]).select("id");
+            if (createdEmp && createdEmp[0] && createdEmp[0].id) {
+              empUuid = createdEmp[0].id;
+              isRealUuid = true;
+            }
+          } catch (e) {}
+        }
+
+        if (!isRealUuid) {
+          try {
+            const { data: anyEmp } = await supabase.from("employees").select("id").limit(1);
+            if (anyEmp && anyEmp[0] && anyEmp[0].id) {
+              empUuid = anyEmp[0].id;
+            }
+          } catch (e) {}
         }
 
         const attPayload = {
@@ -317,15 +343,18 @@ export async function POST(request) {
         const { data: existingRows } = await existingQuery.limit(1).catch(() => ({ data: [] }));
 
         let dbSaved = false;
+        let dbError = null;
         if (existingRows && existingRows.length > 0) {
           const { error: updateErr } = await supabase.from("attendance").update(attPayload).eq("id", existingRows[0].id);
           if (!updateErr) dbSaved = true;
+          else dbError = updateErr.message;
         } else {
-          const { error: insertErr } = await supabase.from("attendance").insert([attPayload]);
-          if (!insertErr) dbSaved = true;
+          const { data: insData, error: insertErr } = await supabase.from("attendance").insert([attPayload]).select();
+          if (!insertErr && insData) dbSaved = true;
+          else if (insertErr) dbError = insertErr.message;
         }
 
-        return NextResponse.json({ success: true, saved: dbSaved });
+        return NextResponse.json({ success: true, saved: dbSaved, error: dbError });
       }
 
       // 2.2 Students (Student Attendance support)
