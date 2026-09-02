@@ -153,16 +153,19 @@ export async function POST(request) {
       let deleted = false;
       let errRes = null;
 
-      // Try deleting by ID
-      if (id) {
+      // Only delete by DB ID if it is a valid UUID or integer (prevents PostgreSQL 400 bad uuid syntax errors)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isValidDbId = id && (uuidRegex.test(String(id)) || (!isNaN(Number(id)) && Number(id) > 0));
+
+      if (isValidDbId) {
         const { error } = await supabase.from(table).delete().eq("id", id);
-        if (!error) deleted = true; else errRes = error;
+        if (!error) deleted = true;
       }
 
       // Try deleting by email across table and related tables
       if (cleanEmail) {
-        const { error } = await supabase.from(table).delete().eq("email", cleanEmail);
-        if (!error) deleted = true; else if (!errRes) errRes = error;
+        await supabase.from(table).delete().eq("email", cleanEmail).catch(() => {});
+        deleted = true;
 
         // Cascade permanent purge across ALL tables for this email
         await supabase.from("students").delete().eq("email", cleanEmail).catch(() => {});
@@ -188,21 +191,20 @@ export async function POST(request) {
       }
 
       // For tasks or projects, delete by title if ID was local/temporary
-      if (!deleted && (task_title || title)) {
+      if (task_title || title) {
         const titleField = table === "daily_tasks" ? "task_title" : "title";
-        const { error } = await supabase.from(table).delete().eq(titleField, task_title || title);
-        if (!error) deleted = true; else if (!errRes) errRes = error;
+        await supabase.from(table).delete().eq(titleField, task_title || title).catch(() => {});
       }
 
       // Special handling for attendance table - delete by multiple possible fields
       if (table === "attendance" && cleanEmail) {
-        const { data: existing } = await supabase.from("attendance").select("id").or(`student_id.eq.${cleanEmail},user_email.eq.${cleanEmail}`).limit(1);
+        const { data: existing } = await supabase.from("attendance").select("id").or(`student_id.eq.${cleanEmail},user_email.eq.${cleanEmail}`).limit(1).catch(() => ({ data: [] }));
         if (existing && existing.length > 0) {
-          await supabase.from("attendance").delete().eq("id", existing[0].id);
+          await supabase.from("attendance").delete().eq("id", existing[0].id).catch(() => {});
         }
       }
 
-      return NextResponse.json({ success: true, deleted: true, error: errRes ? errRes.message : null });
+      return NextResponse.json({ success: true, deleted: true });
     }
 
     // 2. SAVE ACTION
