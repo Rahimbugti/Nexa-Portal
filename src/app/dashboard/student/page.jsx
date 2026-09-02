@@ -1147,23 +1147,32 @@ export default function StudentDedicatedDashboardPage() {
     // Shift starts at 10:00 AM (600 mins). Grace period up to 10:15 AM (615 mins).
     const isLate = currentMins > 615;
     const attStatus = isLate ? "Late (Shift 10:00 AM - 06:00 PM)" : "Present (On Time)";
+    const todayDateStr = getTodayDateString();
+    const studentEmail = (studentInfo.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
+    const studentName = studentInfo.name || localStorage.getItem("current_user_name") || "Student Member";
 
     const newRecord = {
       id: `att-${Date.now()}`,
-      student_id: studentInfo.enrollmentNo || studentInfo.email,
-      employee_id: studentInfo.enrollmentNo || studentInfo.email,
-      user_id: studentInfo.email,
-      user_email: studentInfo.email,
-      user_name: studentInfo.name,
-      employee_name: studentInfo.name,
+      student_id: studentInfo.enrollmentNo || studentEmail,
+      employee_id: studentInfo.enrollmentNo || studentEmail,
+      user_id: studentEmail,
+      user_email: studentEmail,
+      email: studentEmail,
+      user_name: studentName,
+      employee_name: studentName,
+      name: studentName,
       user_role: isIntern ? "intern" : "student",
       type: "check_in",
       check_in_time: timeStr,
+      check_in: timeStr,
       check_out_time: "Not Checked Out",
+      check_out: "Not Checked Out",
       attendance_status: attStatus,
-      attendance_date: getTodayDateString(),
-      date: getTodayDateString(),
+      status: attStatus,
+      attendance_date: todayDateStr,
+      date: todayDateStr,
       timestamp: now.toISOString(),
+      created_at: now.toISOString(),
       public_ip: "127.0.0.1",
     };
 
@@ -1171,9 +1180,29 @@ export default function StudentDedicatedDashboardPage() {
     setStudentAttendanceHistory((prev) => [newRecord, ...prev.filter(r => r.attendance_date !== newRecord.attendance_date)]);
 
     try {
-      const key = `today_attendance_${studentInfo.email}`;
+      const key = `today_attendance_${studentEmail}`;
       localStorage.setItem(key, JSON.stringify([newRecord]));
+
+      // 1. Save to master attendance logs cache
+      const masterLogs = JSON.parse(localStorage.getItem("software_house_master_attendance_logs") || "[]");
+      const updatedMaster = [newRecord, ...masterLogs.filter(l => !(
+        ((l.user_email || l.email || "").toLowerCase().trim() === studentEmail) &&
+        (l.attendance_date === todayDateStr || l.date === todayDateStr)
+      ))];
+      localStorage.setItem("software_house_master_attendance_logs", JSON.stringify(updatedMaster));
+
+      // 2. Direct database persistence call
       await dbSaveRecord("attendance", newRecord).catch(() => {});
+      await fetch("/api/persistence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "attendance", record: newRecord, action: "save" })
+      }).catch(() => {});
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("storage"));
+        window.dispatchEvent(new Event("dataChanged"));
+      }
     } catch (e) {}
 
     setMarkingAttendance(false);
@@ -1194,11 +1223,15 @@ export default function StudentDedicatedDashboardPage() {
     setMarkingAttendance(true);
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const todayDateStr = getTodayDateString();
+    const studentEmail = (studentInfo.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
 
     const updatedRecord = {
       ...todayAttendance,
       check_out_time: timeStr,
+      check_out: timeStr,
       attendance_status: "Present (Completed)",
+      status: "Present (Completed)",
       updated_at: now.toISOString(),
     };
 
@@ -1208,9 +1241,27 @@ export default function StudentDedicatedDashboardPage() {
     );
 
     try {
-      const key = `today_attendance_${studentInfo.email}`;
+      const key = `today_attendance_${studentEmail}`;
       localStorage.setItem(key, JSON.stringify([updatedRecord]));
+
+      const masterLogs = JSON.parse(localStorage.getItem("software_house_master_attendance_logs") || "[]");
+      const updatedMaster = [updatedRecord, ...masterLogs.filter(l => !(
+        ((l.user_email || l.email || "").toLowerCase().trim() === studentEmail) &&
+        (l.attendance_date === todayDateStr || l.date === todayDateStr)
+      ))];
+      localStorage.setItem("software_house_master_attendance_logs", JSON.stringify(updatedMaster));
+
       await dbSaveRecord("attendance", updatedRecord).catch(() => {});
+      await fetch("/api/persistence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "attendance", record: updatedRecord, action: "save" })
+      }).catch(() => {});
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("storage"));
+        window.dispatchEvent(new Event("dataChanged"));
+      }
     } catch (e) {}
 
     setMarkingAttendance(false);

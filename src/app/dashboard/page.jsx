@@ -241,10 +241,12 @@ export default function DashboardPage() {
 
   const loadAllMembers = useCallback(async () => {
     try {
-      const [cloudEmps, cloudStudents, cloudInterns] = await Promise.all([
+      const [cloudEmps, cloudStudents, cloudInterns, cloudAtt, cloudLeaves] = await Promise.all([
         dbFetch("employees", [], true).catch(() => []),
         dbFetch("students", [], true).catch(() => []),
-        dbFetch("interns", [], true).catch(() => [])
+        dbFetch("interns", [], true).catch(() => []),
+        dbFetch("attendance", [], true).catch(() => []),
+        dbFetch("leaves", [], true).catch(() => [])
       ]);
 
       if (typeof window !== "undefined") {
@@ -256,18 +258,35 @@ export default function DashboardPage() {
       const persistentEmps = cloudEmps || [];
       const persistentStudents = cloudStudents || [];
       const persistentInterns = cloudInterns || [];
+      const dbAttendance = cloudAtt || [];
+      const dbLeaves = cloudLeaves || [];
 
       const masterLogs = JSON.parse(localStorage.getItem("software_house_master_attendance_logs") || "[]");
       const savedEmpAtt = JSON.parse(localStorage.getItem("today_attendance_employee") || "[]");
       const savedStuAtt = JSON.parse(localStorage.getItem("today_attendance_student") || "[]");
 
       const todayStr = new Date().toISOString().split("T")[0];
+      const now = new Date();
+      const currentMins = now.getHours() * 60 + now.getMinutes();
 
       const getTodayAttendanceText = (email, item) => {
         if (!email) return "Not Clocked In Yet";
         const eClean = email.toLowerCase().trim();
 
-        // 1. Direct user log
+        // 1. Check direct database attendance
+        const dbTodayRecord = dbAttendance.find(r => {
+          const rEmail = (r.user_email || r.email || r.user_id || r.student_id || r.employee_id || "").toLowerCase().trim();
+          const rDate = (r.attendance_date || r.date || (r.timestamp ? r.timestamp.split("T")[0] : "")).slice(0, 10);
+          return (rEmail === eClean) && (rDate === todayStr);
+        });
+
+        if (dbTodayRecord) {
+          const time = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "Clocked In";
+          const status = dbTodayRecord.attendance_status || dbTodayRecord.status || "Present (On Time)";
+          return `Present Today (${time}) 🟢`;
+        }
+
+        // 2. Direct user local storage log
         const userAttKey = `today_attendance_${eClean}`;
         const userLogs = JSON.parse(localStorage.getItem(userAttKey) || "[]");
         const todayUserLog = userLogs.find(r => {
@@ -277,39 +296,45 @@ export default function DashboardPage() {
 
         if (todayUserLog) {
           const time = todayUserLog.check_in_time || todayUserLog.check_in || "Clocked In";
-          return `Present Today (${time})`;
+          return `Present Today (${time}) 🟢`;
         }
 
-        // 2. Master logs
+        // 3. Master logs cache
         const todayMasterLog = masterLogs.find(r => {
-          const rEmail = (r.user_email || r.email || r.user_id || r.employee_id || "").toLowerCase().trim();
+          const rEmail = (r.user_email || r.email || r.user_id || r.employee_id || r.student_id || "").toLowerCase().trim();
           const rDate = (r.attendance_date || r.date || r.timestamp || r.created_at || "").slice(0, 10);
           return rEmail === eClean && (rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr);
         });
 
         if (todayMasterLog) {
           const time = todayMasterLog.check_in_time || todayMasterLog.check_in || "Clocked In";
-          return `Present Today (${time})`;
+          return `Present Today (${time}) 🟢`;
         }
 
-        // 3. Saved group log
-        const todayGroupLog = [...savedEmpAtt, ...savedStuAtt].find(r => {
-          const rEmail = (r.user_email || r.email || r.user_id || "").toLowerCase().trim();
-          return rEmail === eClean;
+        // 4. Check Leaves (Approved or Pending)
+        const userLeave = dbLeaves.find(l => {
+          const lEmail = (l.applicant_email || l.email || "").toLowerCase().trim();
+          const lStart = l.start_date || l.applied_at || "";
+          const lEnd = l.end_date || l.start_date || "";
+          return lEmail === eClean && todayStr >= lStart && todayStr <= lEnd && (l.status === "approved" || l.status === "pending");
         });
 
-        if (todayGroupLog) {
-          const time = todayGroupLog.check_in_time || "Clocked In";
-          return `Present Today (${time})`;
+        if (userLeave) {
+          return `On Leave (${userLeave.leave_type || "Casual"}) 🌴`;
         }
 
-        // 4. If newly enrolled today
+        // 5. Shift Ended (After 6:00 PM) -> Marked Absent
+        if (currentMins >= 1080) {
+          return "Absent Today (Shift Ended 06:00 PM) 🔴";
+        }
+
+        // 6. If newly enrolled today
         const joinDate = (item?.start_date || item?.admission_date || item?.created_at || "").slice(0, 10);
-        if (joinDate === todayStr || !joinDate) {
-          return "Enrolled Today (Pending Clock-In)";
+        if (joinDate === todayStr) {
+          return "Enrolled Today (Pending Clock-In) ⏳";
         }
 
-        return "Not Checked In Yet";
+        return "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠";
       };
 
       const combinedMap = new Map();
