@@ -269,6 +269,19 @@ export default function DashboardPage() {
       const now = new Date();
       const currentMins = now.getHours() * 60 + now.getMinutes();
 
+      const formatPresentText = (record) => {
+        const timeIn = record.check_in_time || record.check_in || "";
+        const timeOut = record.check_out_time || record.check_out || "";
+        const hasTimeOut = timeOut && timeOut !== "Not Checked Out" && timeOut !== "--:--";
+
+        if (timeIn && hasTimeOut) {
+          return `Present 🟢 (In: ${timeIn} | Out: ${timeOut})`;
+        } else if (timeIn && timeIn !== "--:--") {
+          return `Present Today (${timeIn}) 🟢`;
+        }
+        return "Present Today 🟢";
+      };
+
       const getTodayAttendanceText = (email, item) => {
         if (!email) return "Not Clocked In Yet";
         const eClean = email.toLowerCase().trim();
@@ -288,8 +301,7 @@ export default function DashboardPage() {
         });
 
         if (dbTodayRecord) {
-          const time = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "Clocked In";
-          return `Present Today (${time}) 🟢`;
+          return formatPresentText(dbTodayRecord);
         }
 
         // 2. Direct user local storage log
@@ -301,8 +313,7 @@ export default function DashboardPage() {
         });
 
         if (todayUserLog) {
-          const time = todayUserLog.check_in_time || todayUserLog.check_in || "Clocked In";
-          return `Present Today (${time}) 🟢`;
+          return formatPresentText(todayUserLog);
         }
 
         // 3. Master logs cache
@@ -319,8 +330,7 @@ export default function DashboardPage() {
         });
 
         if (todayMasterLog) {
-          const time = todayMasterLog.check_in_time || todayMasterLog.check_in || "Clocked In";
-          return `Present Today (${time}) 🟢`;
+          return formatPresentText(todayMasterLog);
         }
 
         // 4. Check Leaves (Approved or Pending)
