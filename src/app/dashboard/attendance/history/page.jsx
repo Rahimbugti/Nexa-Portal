@@ -105,29 +105,34 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
       return lStart && lEnd && dateStr >= lStart && dateStr <= lEnd && (l.status === "approved" || l.status === "pending");
     });
 
-    if (dateStr === todayStr && todayRecord && todayRecord.check_in_time) {
+    if (dateStr === todayStr && todayRecord && (todayRecord.check_in_time || todayRecord.check_in || todayRecord.type === "check_in")) {
+      const cIn = todayRecord.check_in_time || todayRecord.check_in || "--:--";
+      const cOut = (todayRecord.check_out_time && todayRecord.check_out_time !== "Not Checked Out" && todayRecord.check_out_time !== "--:--")
+        ? todayRecord.check_out_time
+        : (todayRecord.check_out || "Not Checked Out");
       calendar.push({
         id: todayRecord.id || `att-${dateStr}`,
         attendance_date: dateStr,
         date: dateStr,
         day_name: dayName,
-        check_in_time: todayRecord.check_in_time,
-        check_out_time: todayRecord.check_out_time || "Not Checked Out",
-        attendance_status: todayRecord.attendance_status || todayRecord.status || "Present (On Time)",
+        check_in_time: cIn,
+        check_out_time: cOut,
+        attendance_status: todayRecord.attendance_status || todayRecord.status || (cOut !== "Not Checked Out" && cOut !== "--:--" ? "Present (Completed) 🟢" : "Present (On Time) 🟢"),
         is_today: true,
       });
-    } else if (matchedLog && (matchedLog.check_in_time || matchedLog.type === "check_in" || (matchedLog.attendance_status && matchedLog.attendance_status !== "Absent"))) {
+    } else if (matchedLog && (matchedLog.check_in_time || matchedLog.check_in || matchedLog.type === "check_in" || (matchedLog.attendance_status && !String(matchedLog.attendance_status).toLowerCase().includes("absent")))) {
+      const cIn = matchedLog.check_in_time || matchedLog.check_in || matchedLog.time || "--:--";
+      const cOut = (matchedLog.check_out_time && matchedLog.check_out_time !== "Not Checked Out" && matchedLog.check_out_time !== "--:--")
+        ? matchedLog.check_out_time
+        : (matchedLog.check_out || (dateStr === todayStr ? "Not Checked Out" : "06:00 PM"));
       calendar.push({
         id: matchedLog.id || `att-${dateStr}`,
         attendance_date: dateStr,
         date: dateStr,
         day_name: dayName,
-        check_in_time: matchedLog.check_in_time || matchedLog.time || "--:--",
-        check_out_time:
-          matchedLog.check_out_time && matchedLog.check_out_time !== "Not Checked Out" && matchedLog.check_out_time !== "--:--"
-            ? matchedLog.check_out_time
-            : (dateStr === todayStr ? "Not Checked Out" : "06:00 PM"),
-        attendance_status: matchedLog.attendance_status || matchedLog.status || "Present (On Time)",
+        check_in_time: cIn,
+        check_out_time: cOut,
+        attendance_status: matchedLog.attendance_status || matchedLog.status || (cOut !== "Not Checked Out" && cOut !== "--:--" ? "Present (Completed) 🟢" : "Present (On Time) 🟢"),
       });
     } else if (matchedLeave) {
       calendar.push({
@@ -152,33 +157,19 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
         is_sunday: true,
       });
     } else if (dateStr === todayStr) {
-      const isRegistrationDay = cleanStartDateStr === todayStr;
-      if (currentMins >= 1080) { // After 6:00 PM
-        calendar.push({
-          id: `today-absent-${dateStr}`,
-          attendance_date: dateStr,
-          date: dateStr,
-          day_name: dayName,
-          check_in_time: "--:--",
-          check_out_time: "--:--",
-          attendance_status: isRegistrationDay ? "Enrolled Today (Pending Check-In) ⏳" : "Absent (Shift Ended 06:00 PM) 🔴",
-          is_absent: !isRegistrationDay,
-          is_pending: isRegistrationDay,
-          is_today: true,
-        });
-      } else {
-        calendar.push({
-          id: `today-pending-${dateStr}`,
-          attendance_date: dateStr,
-          date: dateStr,
-          day_name: dayName,
-          check_in_time: "--:--",
-          check_out_time: "--:--",
-          attendance_status: isRegistrationDay ? "Enrolled Today (Pending Check-In) ⏳" : (currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠"),
-          is_pending: true,
-          is_today: true,
-        });
-      }
+      const isShiftOver = currentMins >= 1080;
+      calendar.push({
+        id: `today-pending-${dateStr}`,
+        attendance_date: dateStr,
+        date: dateStr,
+        day_name: dayName,
+        check_in_time: "--:--",
+        check_out_time: "--:--",
+        attendance_status: isShiftOver ? "Absent Today (Shift Ended 06:00 PM) 🔴" : (currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠"),
+        is_pending: !isShiftOver,
+        is_absent: isShiftOver,
+        is_today: true,
+      });
     } else {
       calendar.push({
         id: `absent-${dateStr}`,
@@ -403,12 +394,25 @@ export default function AdminAttendanceHistoryHub() {
       return false;
     });
 
-    // 3. Check today record
+    // 3. Check today record from DB logs or localStorage cache
     const todayStr = getTodayDateString();
     let todayRec = userLogs.find(l => {
       const lDate = l.attendance_date || l.date || (l.timestamp ? l.timestamp.split("T")[0] : "");
       return lDate === todayStr;
     });
+
+    if (!todayRec) {
+      try {
+        const savedToday = JSON.parse(localStorage.getItem(`today_attendance_${uEmail}`) || "null");
+        if (savedToday) {
+          if (Array.isArray(savedToday)) {
+            todayRec = savedToday.find(r => (r.attendance_date === todayStr || r.date === todayStr || (r.timestamp && r.timestamp.startsWith(todayStr))));
+          } else if (savedToday.attendance_date === todayStr || savedToday.date === todayStr || (savedToday.timestamp && savedToday.timestamp.startsWith(todayStr))) {
+            todayRec = savedToday;
+          }
+        }
+      } catch (e) {}
+    }
 
     // 4. Build Full Calendar
     const calendar = buildTargetUserAttendanceCalendar({
