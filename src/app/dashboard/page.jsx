@@ -282,22 +282,47 @@ export default function DashboardPage() {
         return "Present Today 🟢";
       };
 
+      const isEmailMatch = (emailA, emailB) => {
+        if (!emailA || !emailB) return false;
+        const a = emailA.toLowerCase().trim();
+        const b = emailB.toLowerCase().trim();
+        if (!a.includes("@") || !b.includes("@")) return false;
+        return a === b;
+      };
+
+      const isNameMatch = (nameA, nameB) => {
+        if (!nameA || !nameB) return false;
+        const a = nameA.toLowerCase().trim();
+        const b = nameB.toLowerCase().trim();
+        if (a.length < 3 || b.length < 3) return false;
+        const generic = ["member", "student", "intern", "employee", "admin", "staff", "user", "unknown"];
+        if (generic.includes(a) || generic.includes(b)) return false;
+        return a === b;
+      };
+
+      const isCandidateMatch = (record, targetEmail, targetItem) => {
+        if (!record) return false;
+        const rEmail = (record.user_email || record.email || record.user_id || record.student_id || record.employee_id || "").toLowerCase().trim();
+        const rName = (record.user_name || record.name || record.full_name || record.employee_name || "").toLowerCase().trim();
+        const targetName = (targetItem?.full_name || targetItem?.name || "").toLowerCase().trim();
+        const targetId = String(targetItem?.id || "").toLowerCase().trim();
+        const rId = String(record.employee_id || record.student_id || record.user_id || "").toLowerCase().trim();
+
+        if (isEmailMatch(rEmail, targetEmail)) return true;
+        if (targetId && targetId.length > 5 && rId && rId.length > 5 && targetId === rId) return true;
+        if (isNameMatch(rName, targetName)) return true;
+        return false;
+      };
+
       const getTodayAttendanceText = (email, item) => {
         if (!email) return "Not Clocked In Yet";
         const eClean = email.toLowerCase().trim();
-        const itemName = (item?.full_name || item?.name || "").toLowerCase().trim();
 
         // 1. Check direct database attendance
         const dbTodayRecord = dbAttendance.find(r => {
-          const rEmail = (r.user_email || r.email || r.user_id || r.student_id || r.employee_id || "").toLowerCase().trim();
-          const rName = (r.user_name || r.name || r.full_name || r.employee_name || "").toLowerCase().trim();
           const rDate = (r.attendance_date || r.date || (r.timestamp ? r.timestamp.split("T")[0] : "")).slice(0, 10);
           const isDateToday = rDate === todayStr || (r.created_at && r.created_at.slice(0, 10) === todayStr);
-          
-          return isDateToday && (
-            (eClean && (rEmail === eClean || rEmail.includes(eClean) || eClean.includes(rEmail))) ||
-            (itemName && rName && (rName === itemName || rName.includes(itemName) || itemName.includes(rName)))
-          );
+          return isDateToday && isCandidateMatch(r, eClean, item);
         });
 
         if (dbTodayRecord) {
@@ -318,15 +343,9 @@ export default function DashboardPage() {
 
         // 3. Master logs cache
         const todayMasterLog = masterLogs.find(r => {
-          const rEmail = (r.user_email || r.email || r.user_id || r.employee_id || r.student_id || "").toLowerCase().trim();
-          const rName = (r.user_name || r.name || r.full_name || r.employee_name || "").toLowerCase().trim();
           const rDate = (r.attendance_date || r.date || r.timestamp || r.created_at || "").slice(0, 10);
           const isDateToday = rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr;
-          
-          return isDateToday && (
-            (eClean && (rEmail === eClean || rEmail.includes(eClean) || eClean.includes(rEmail))) ||
-            (itemName && rName && (rName === itemName || rName.includes(itemName) || itemName.includes(rName)))
-          );
+          return isDateToday && isCandidateMatch(r, eClean, item);
         });
 
         if (todayMasterLog) {
@@ -338,7 +357,7 @@ export default function DashboardPage() {
           const lEmail = (l.applicant_email || l.email || "").toLowerCase().trim();
           const lStart = l.start_date || l.applied_at || "";
           const lEnd = l.end_date || l.start_date || "";
-          return lEmail === eClean && todayStr >= lStart && todayStr <= lEnd && (l.status === "approved" || l.status === "pending");
+          return isEmailMatch(lEmail, eClean) && todayStr >= lStart && todayStr <= lEnd && (l.status === "approved" || l.status === "pending");
         });
 
         if (userLeave) {
