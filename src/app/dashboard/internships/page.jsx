@@ -194,21 +194,36 @@ export default function InternshipsPage() {
       .on("broadcast", { event: "snapshot-captured" }, (payload) => {
         const snap = payload?.payload || payload;
         if (snap && (snap.imageUrl || snap.screenshot_url)) {
-          setStudentScreenshots((prev) => [snap, ...prev]);
-          setIsLiveStreamModalOpen(false);
-          setSnapshotPreviewModal({
-            isOpen: true,
-            snapshot: snap,
-            student: {
-              full_name: snap.employeeName,
-              course_name: snap.department,
-            },
+          setStudentScreenshots((prev) => {
+            const exists = prev.some((s) => s.id === snap.id);
+            if (exists) return prev;
+            return [snap, ...prev];
           });
-          showToast("Snapshot Received 📸", `Audit snapshot of ${snap.employeeName} received & saved!`, "success");
+          showToast("New Screenshot Logged 📸", `Automatic frame recorded for ${snap.employeeName || "Intern"}.`, "success");
         }
       })
       .subscribe();
   }, []);
+
+  // Live Auto-Refresh Polling for screenshots while modal is open
+  useEffect(() => {
+    if (!isLiveStreamModalOpen || !activeRemoteStudent) return;
+    const pollInterval = setInterval(async () => {
+      try {
+        const allScreenshots = await dbFetch("screenshot_logs", []).catch(() => []);
+        const userScs = (allScreenshots || []).filter(
+          (s) =>
+            (s.email && s.email.toLowerCase() === (activeRemoteStudent.email || "").toLowerCase()) ||
+            (s.employeeName && s.employeeName.toLowerCase().includes(activeRemoteStudent.full_name?.toLowerCase()))
+        );
+        if (userScs.length > 0) {
+          setStudentScreenshots(userScs);
+        }
+      } catch (e) {}
+    }, 4000);
+
+    return () => clearInterval(pollInterval);
+  }, [isLiveStreamModalOpen, activeRemoteStudent]);
 
   const captureAuditSnapshot = async () => {
     if (!activeRemoteStudent) return;

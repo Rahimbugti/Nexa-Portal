@@ -498,18 +498,23 @@ export default function StudentDedicatedDashboardPage() {
       setIntervalClicks(0);
       setIntervalKeys(0);
 
-      // Automated Silent Random Screenshot Interval (runs every 5 to 10 minutes randomly)
+      // Automated Silent Random Screenshot Interval (runs every 60s for testing & continuous monitoring)
       if (randomScreenshotTimerRef.current) clearInterval(randomScreenshotTimerRef.current);
+      let autoSnapCount = 1;
       randomScreenshotTimerRef.current = setInterval(async () => {
         if (res.stream && res.stream.active) {
-          console.log("[Auto-Audit] Capturing automated random workstation screenshot...");
-          await captureFrameFromStream(res.stream, sName, sEmail, sCourse, intervalClicks, intervalKeys);
+          console.log(`[Auto-Audit] Capturing automated random workstation screenshot #${autoSnapCount}...`);
+          const snap = await captureFrameFromStream(res.stream, sName, sEmail, sCourse, intervalClicks, intervalKeys);
+          if (snap) {
+            autoSnapCount++;
+            showToast("Auto-Snapshot Logged 📸", `Automated frame saved (${intervalClicks} clicks, ${intervalKeys} keys).`, "info");
+          }
           setIntervalClicks(0);
           setIntervalKeys(0);
         }
-      }, 360000); // 6 mins automated interval
+      }, 60000); // 60s automated interval
 
-      showToast("Workstation Session Active 🖥️", "Automated click tracking & periodic random audit snapshots enabled.", "success");
+      showToast("Workstation Session Active 🖥️", "Automated click tracking & 60s auto-audit screenshots enabled.", "success");
     } catch (err) {
       console.warn("Screen share error:", err);
       showToast("Notice ℹ️", "Screen capture permission was not granted or was cancelled.", "info");
