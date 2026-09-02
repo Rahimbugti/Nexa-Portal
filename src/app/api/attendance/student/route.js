@@ -181,6 +181,7 @@ export async function POST(request) {
           .limit(1);
 
         const attPayload = {
+          employee_id: studentEmail,
           student_id: studentEmail,
           user_email: studentEmail,
           user_name: studentName,
@@ -207,6 +208,18 @@ export async function POST(request) {
 
           if (!updateError && updated) {
             savedRecords.push(updated[0]);
+          } else {
+            // Fallback update
+            const fallback = {
+              employee_id: studentEmail,
+              date: attDate,
+              status: attendanceStatus,
+              check_in: checkInTime,
+              check_out: checkOutTime,
+              ip_address: record.ip_address || "127.0.0.1"
+            };
+            const { data: fUp } = await supabase.from("attendance").update(fallback).eq("id", existingRows[0].id).select();
+            if (fUp) savedRecords.push(fUp[0]);
           }
         } else {
           // Insert new record
@@ -217,6 +230,18 @@ export async function POST(request) {
 
           if (!insertError && inserted) {
             savedRecords.push(inserted[0]);
+          } else {
+            // Fallback insert
+            const fallback = {
+              employee_id: studentEmail,
+              date: attDate,
+              status: attendanceStatus,
+              check_in: checkInTime,
+              check_out: checkOutTime,
+              ip_address: record.ip_address || "127.0.0.1"
+            };
+            const { data: fIns } = await supabase.from("attendance").insert([fallback]).select();
+            if (fIns) savedRecords.push(fIns[0]);
           }
         }
 

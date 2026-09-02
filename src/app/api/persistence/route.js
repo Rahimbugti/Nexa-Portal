@@ -329,6 +329,8 @@ export async function POST(request) {
 
         const attPayload = {
           employee_id: empUuid,
+          user_email: targetEmail,
+          user_name: targetName || (targetEmail ? targetEmail.split("@")[0] : "Member"),
           date: attDate,
           status: record.status || record.attendance_status || (checkOutTime ? "Present (Completed)" : "Present (On Time)"),
           check_in: checkInTime,
@@ -346,12 +348,38 @@ export async function POST(request) {
         let dbError = null;
         if (existingRows && existingRows.length > 0) {
           const { error: updateErr } = await supabase.from("attendance").update(attPayload).eq("id", existingRows[0].id);
-          if (!updateErr) dbSaved = true;
-          else dbError = updateErr.message;
+          if (!updateErr) {
+            dbSaved = true;
+          } else {
+            const fallbackPayload = {
+              employee_id: empUuid,
+              date: attDate,
+              status: attPayload.status,
+              check_in: checkInTime,
+              check_out: checkOutTime,
+              ip_address: attPayload.ip_address
+            };
+            const { error: fErr } = await supabase.from("attendance").update(fallbackPayload).eq("id", existingRows[0].id);
+            if (!fErr) dbSaved = true;
+            else dbError = fErr.message;
+          }
         } else {
           const { data: insData, error: insertErr } = await supabase.from("attendance").insert([attPayload]).select();
-          if (!insertErr && insData) dbSaved = true;
-          else if (insertErr) dbError = insertErr.message;
+          if (!insertErr && insData) {
+            dbSaved = true;
+          } else {
+            const fallbackPayload = {
+              employee_id: empUuid,
+              date: attDate,
+              status: attPayload.status,
+              check_in: checkInTime,
+              check_out: checkOutTime,
+              ip_address: attPayload.ip_address
+            };
+            const { data: fInsData, error: fErr } = await supabase.from("attendance").insert([fallbackPayload]).select();
+            if (!fErr && fInsData) dbSaved = true;
+            else if (fErr) dbError = fErr.message;
+          }
         }
 
         return NextResponse.json({ success: true, saved: dbSaved, error: dbError });
