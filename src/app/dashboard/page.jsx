@@ -323,18 +323,8 @@ export default function DashboardPage() {
           return `On Leave (${userLeave.leave_type || "Casual"}) 🌴`;
         }
 
-        // 5. Shift Ended (After 6:00 PM) -> Marked Absent
-        if (currentMins >= 1080) {
-          return "Absent Today (Shift Ended 06:00 PM) 🔴";
-        }
-
-        // 6. If newly enrolled today
-        const joinDate = (item?.start_date || item?.admission_date || item?.created_at || "").slice(0, 10);
-        if (joinDate === todayStr) {
-          return "Enrolled Today (Pending Clock-In) ⏳";
-        }
-
-        return "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠";
+        // 5. Otherwise default to Absent Today
+        return "Absent Today 🔴";
       };
 
       const combinedMap = new Map();
