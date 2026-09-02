@@ -148,30 +148,83 @@ export async function POST(request) {
 
     // 1. DELETE ACTION
     if (action === "delete") {
-      const { id, email, full_name, name, task_title, title } = record || {};
-      const cleanEmail = email ? email.toLowerCase().trim() : "";
-      let deleted = false;
-      let errRes = null;
-
-      // Only delete by DB ID if it is a valid UUID or integer (prevents PostgreSQL 400 bad uuid syntax errors)
+      const { id, email, full_name, name, task_title, title, applicant_email } = record || {};
+      const cleanEmail = (email || applicant_email || "").toLowerCase().trim();
+      const cleanName = (full_name || name || "").trim();
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const isValidDbId = id && (uuidRegex.test(String(id)) || (!isNaN(Number(id)) && Number(id) > 0));
 
+      // 1. Direct ID deletion if valid DB ID
       if (isValidDbId) {
-        const { error } = await supabase.from(table).delete().eq("id", id);
-        if (!error) deleted = true;
+        await supabase.from(table).delete().eq("id", id).catch(() => {});
       }
 
-      // Try deleting by email across table and related tables with case-insensitive matching
-      if (cleanEmail) {
-        await supabase.from(table).delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        deleted = true;
+      // 2. Query and delete from students table by email, name, or enrollment
+      if (cleanEmail || cleanName) {
+        try {
+          const { data: matchedStudents } = await supabase
+            .from("students")
+            .select("id")
+            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
+            .catch(() => ({ data: [] }));
 
-        // Cascade permanent purge across ALL tables for this email
-        await supabase.from("students").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("interns").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("employees").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("app_users").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
+          if (matchedStudents && matchedStudents.length > 0) {
+            for (const s of matchedStudents) {
+              await supabase.from("students").delete().eq("id", s.id).catch(() => {});
+            }
+          }
+        } catch (e) {}
+
+        // 3. Query and delete from interns table by email or name
+        try {
+          const { data: matchedInterns } = await supabase
+            .from("interns")
+            .select("id")
+            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
+            .catch(() => ({ data: [] }));
+
+          if (matchedInterns && matchedInterns.length > 0) {
+            for (const i of matchedInterns) {
+              await supabase.from("interns").delete().eq("id", i.id).catch(() => {});
+            }
+          }
+        } catch (e) {}
+
+        // 4. Query and delete from employees table by email or name
+        try {
+          const { data: matchedEmployees } = await supabase
+            .from("employees")
+            .select("id")
+            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
+            .catch(() => ({ data: [] }));
+
+          if (matchedEmployees && matchedEmployees.length > 0) {
+            for (const emp of matchedEmployees) {
+              await supabase.from("employees").delete().eq("id", emp.id).catch(() => {});
+            }
+          }
+        } catch (e) {}
+
+        // 5. Query and delete from app_users
+        if (cleanEmail) {
+          try {
+            const { data: matchedUsers } = await supabase
+              .from("app_users")
+              .select("id")
+              .ilike("email", `%${cleanEmail}%`)
+              .catch(() => ({ data: [] }));
+
+            if (matchedUsers && matchedUsers.length > 0) {
+              for (const u of matchedUsers) {
+                await supabase.from("app_users").delete().eq("id", u.id).catch(() => {});
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // 6. Direct cascade deletes across all operational tables
+      if (cleanEmail) {
         await supabase.from("payrolls").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
         await supabase.from("performances").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
         await supabase.from("monitoring_sessions").delete().ilike("user_email", `%${cleanEmail}%`).catch(() => {});
@@ -182,26 +235,10 @@ export async function POST(request) {
         await supabase.from("activity_logs").delete().or(`email.ilike.%${cleanEmail}%,employeeId.ilike.%${cleanEmail}%`).catch(() => {});
       }
 
-      // Try deleting by full_name or name if provided
-      const cleanName = (full_name || name || "").trim();
-      if (cleanName && cleanName.length >= 3) {
-        await supabase.from("interns").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
-        await supabase.from("students").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
-        await supabase.from("employees").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
-      }
-
-      // For tasks or projects, delete by title if ID was local/temporary
+      // 7. For tasks or projects, delete by title if ID was local/temporary
       if (task_title || title) {
         const titleField = table === "daily_tasks" ? "task_title" : "title";
         await supabase.from(table).delete().eq(titleField, task_title || title).catch(() => {});
-      }
-
-      // Special handling for attendance table - delete by multiple possible fields
-      if (table === "attendance" && cleanEmail) {
-        const { data: existing } = await supabase.from("attendance").select("id").or(`student_id.eq.${cleanEmail},user_email.eq.${cleanEmail}`).limit(1).catch(() => ({ data: [] }));
-        if (existing && existing.length > 0) {
-          await supabase.from("attendance").delete().eq("id", existing[0].id).catch(() => {});
-        }
       }
 
       return NextResponse.json({ success: true, deleted: true });
