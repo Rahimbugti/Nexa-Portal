@@ -272,17 +272,23 @@ export default function DashboardPage() {
       const getTodayAttendanceText = (email, item) => {
         if (!email) return "Not Clocked In Yet";
         const eClean = email.toLowerCase().trim();
+        const itemName = (item?.full_name || item?.name || "").toLowerCase().trim();
 
         // 1. Check direct database attendance
         const dbTodayRecord = dbAttendance.find(r => {
           const rEmail = (r.user_email || r.email || r.user_id || r.student_id || r.employee_id || "").toLowerCase().trim();
+          const rName = (r.user_name || r.name || r.full_name || r.employee_name || "").toLowerCase().trim();
           const rDate = (r.attendance_date || r.date || (r.timestamp ? r.timestamp.split("T")[0] : "")).slice(0, 10);
-          return (rEmail === eClean) && (rDate === todayStr);
+          const isDateToday = rDate === todayStr || (r.created_at && r.created_at.slice(0, 10) === todayStr);
+          
+          return isDateToday && (
+            (eClean && (rEmail === eClean || rEmail.includes(eClean) || eClean.includes(rEmail))) ||
+            (itemName && rName && (rName === itemName || rName.includes(itemName) || itemName.includes(rName)))
+          );
         });
 
         if (dbTodayRecord) {
           const time = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "Clocked In";
-          const status = dbTodayRecord.attendance_status || dbTodayRecord.status || "Present (On Time)";
           return `Present Today (${time}) 🟢`;
         }
 
@@ -302,8 +308,14 @@ export default function DashboardPage() {
         // 3. Master logs cache
         const todayMasterLog = masterLogs.find(r => {
           const rEmail = (r.user_email || r.email || r.user_id || r.employee_id || r.student_id || "").toLowerCase().trim();
+          const rName = (r.user_name || r.name || r.full_name || r.employee_name || "").toLowerCase().trim();
           const rDate = (r.attendance_date || r.date || r.timestamp || r.created_at || "").slice(0, 10);
-          return rEmail === eClean && (rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr);
+          const isDateToday = rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr;
+          
+          return isDateToday && (
+            (eClean && (rEmail === eClean || rEmail.includes(eClean) || eClean.includes(rEmail))) ||
+            (itemName && rName && (rName === itemName || rName.includes(itemName) || itemName.includes(rName)))
+          );
         });
 
         if (todayMasterLog) {
@@ -323,7 +335,20 @@ export default function DashboardPage() {
           return `On Leave (${userLeave.leave_type || "Casual"}) 🌴`;
         }
 
-        // 5. Otherwise default to Absent Today
+        // 5. If user enrolled/registered TODAY and hasn't clocked in yet
+        const joinDate = (item?.start_date || item?.created_at || item?.joining_date || "").slice(0, 10);
+        if (joinDate === todayStr) {
+          return "Enrolled Today (Pending Clock-In) ⏳";
+        }
+
+        // 6. If shift is currently active (between 10:00 AM and 06:00 PM) and candidate not checked in yet
+        if (currentMins >= 600 && currentMins < 1080) {
+          return "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠";
+        } else if (currentMins < 600) {
+          return "Shift Starts 10:00 AM ⏳";
+        }
+
+        // 7. Otherwise after 06:00 PM default to Absent Today
         return "Absent Today 🔴";
       };
 
