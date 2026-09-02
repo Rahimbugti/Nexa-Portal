@@ -263,33 +263,36 @@ export default function DashboardPage() {
 
       const todayStr = new Date().toISOString().split("T")[0];
 
-      const getTodayAttendanceText = (email) => {
-        if (!email) return "Absent Today";
+      const getTodayAttendanceText = (email, item) => {
+        if (!email) return "Not Clocked In Yet";
         const eClean = email.toLowerCase().trim();
 
+        // 1. Direct user log
         const userAttKey = `today_attendance_${eClean}`;
         const userLogs = JSON.parse(localStorage.getItem(userAttKey) || "[]");
         const todayUserLog = userLogs.find(r => {
-          const rDate = (r.attendance_date || r.timestamp || r.created_at || "").slice(0, 10);
+          const rDate = (r.attendance_date || r.date || r.timestamp || r.created_at || "").slice(0, 10);
           return rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr;
         });
 
         if (todayUserLog) {
-          const time = todayUserLog.check_in_time || "Clocked In";
+          const time = todayUserLog.check_in_time || todayUserLog.check_in || "Clocked In";
           return `Present Today (${time})`;
         }
 
+        // 2. Master logs
         const todayMasterLog = masterLogs.find(r => {
-          const rEmail = (r.user_email || r.email || r.user_id || "").toLowerCase().trim();
-          const rDate = (r.attendance_date || r.timestamp || r.created_at || "").slice(0, 10);
+          const rEmail = (r.user_email || r.email || r.user_id || r.employee_id || "").toLowerCase().trim();
+          const rDate = (r.attendance_date || r.date || r.timestamp || r.created_at || "").slice(0, 10);
           return rEmail === eClean && (rDate === todayStr || new Date(r.timestamp || r.created_at || Date.now()).toISOString().split("T")[0] === todayStr);
         });
 
         if (todayMasterLog) {
-          const time = todayMasterLog.check_in_time || "Clocked In";
+          const time = todayMasterLog.check_in_time || todayMasterLog.check_in || "Clocked In";
           return `Present Today (${time})`;
         }
 
+        // 3. Saved group log
         const todayGroupLog = [...savedEmpAtt, ...savedStuAtt].find(r => {
           const rEmail = (r.user_email || r.email || r.user_id || "").toLowerCase().trim();
           return rEmail === eClean;
@@ -300,7 +303,13 @@ export default function DashboardPage() {
           return `Present Today (${time})`;
         }
 
-        return "Absent Today";
+        // 4. If newly enrolled today
+        const joinDate = (item?.start_date || item?.admission_date || item?.created_at || "").slice(0, 10);
+        if (joinDate === todayStr || !joinDate) {
+          return "Enrolled Today (Pending Clock-In)";
+        }
+
+        return "Not Checked In Yet";
       };
 
       const combinedMap = new Map();
@@ -314,7 +323,7 @@ export default function DashboardPage() {
           category: e.employment_type || "On-Site Staff",
           role: "employee",
           department: `${e.department || 'General'} (${e.designation || 'Staff'})`,
-          attendance: getTodayAttendanceText(e.email),
+          attendance: getTodayAttendanceText(e.email, e),
           progress: "Assigned Software House Deliverables",
           dailyTask: "Logged daily work progress on assigned task.",
           feeStatus: "N/A (Paid Staff)",
@@ -330,7 +339,7 @@ export default function DashboardPage() {
           category: "Course Enrolled Student",
           role: "student",
           department: s.course_name || "MERN Stack Course",
-          attendance: getTodayAttendanceText(s.email),
+          attendance: getTodayAttendanceText(s.email, s),
           progress: `${s.progress !== undefined ? s.progress : 0}% Course Completed`,
           dailyTask: "Submitted daily practical coding lab assignment.",
           feeStatus: s.fee_status || "Paid",
@@ -346,7 +355,7 @@ export default function DashboardPage() {
           category: i.internship_mode?.includes("Remote") ? "Remote 3-Month Intern" : "On-Site 3-Month Intern",
           role: "intern",
           department: i.course_name || i.domain || "Software Engineering Intern",
-          attendance: getTodayAttendanceText(i.email),
+          attendance: getTodayAttendanceText(i.email, i),
           progress: `${i.progress !== undefined ? i.progress : 0}% Internship Milestone Completed`,
           dailyTask: i.task_logs?.[0]?.details || "Working on assigned project module.",
           feeStatus: "Free Internship",

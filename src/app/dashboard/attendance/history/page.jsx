@@ -40,11 +40,13 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  const sDate = new Date(startDate || "2026-08-01");
+  // If user registered recently (e.g. today or this week), start calendar strictly from their registration date!
+  const cleanStartDateStr = startDate ? String(startDate).slice(0, 10) : todayStr;
+  const sDate = new Date(cleanStartDateStr);
   const eDate = new Date();
-  const minAllowedDate = new Date();
-  minAllowedDate.setDate(minAllowedDate.getDate() - 30);
-  const effectiveStartDate = sDate > minAllowedDate ? sDate : minAllowedDate;
+  
+  // Set effective start date strictly to candidate's joining/registration date
+  const effectiveStartDate = (isNaN(sDate.getTime()) || sDate > eDate) ? new Date(todayStr) : sDate;
 
   const calendar = [];
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -117,6 +119,7 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
         is_sunday: true,
       });
     } else if (dateStr === todayStr) {
+      const isRegistrationDay = cleanStartDateStr === todayStr;
       if (currentMins >= 1080) { // After 6:00 PM
         calendar.push({
           id: `today-absent-${dateStr}`,
@@ -125,8 +128,9 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
           day_name: dayName,
           check_in_time: "--:--",
           check_out_time: "--:--",
-          attendance_status: "Absent (Shift Ended 06:00 PM) 🔴",
-          is_absent: true,
+          attendance_status: isRegistrationDay ? "Enrolled Today (Pending Check-In) ⏳" : "Absent (Shift Ended 06:00 PM) 🔴",
+          is_absent: !isRegistrationDay,
+          is_pending: isRegistrationDay,
           is_today: true,
         });
       } else {
@@ -137,7 +141,7 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
           day_name: dayName,
           check_in_time: "--:--",
           check_out_time: "--:--",
-          attendance_status: currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : "Not Checked In (Shift 10:00 AM - 06:00 PM) 🟠",
+          attendance_status: isRegistrationDay ? "Enrolled Today (Pending Check-In) ⏳" : (currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠"),
           is_pending: true,
           is_today: true,
         });
