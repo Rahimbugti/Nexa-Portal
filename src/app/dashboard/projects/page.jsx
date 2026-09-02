@@ -423,7 +423,7 @@ export default function ProjectsPage() {
           task_title: newTaskForm.task,
           description: newTaskForm.task,
           assigned_to_name: userName,
-          assigned_to_email: targetEmail || "bugtirahim450@gmail.com",
+          assigned_to_email: targetEmail || (typeof window !== "undefined" ? localStorage.getItem("current_user_email") : "") || "student@nexa.com",
           status: "Pending",
           total_working_seconds: 0,
           category: newTaskForm.category,

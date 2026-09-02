@@ -370,6 +370,11 @@ export async function dbDeleteRecord(table, id, emailField = "") {
     backendError = e.message;
   }
 
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("storage"));
+    window.dispatchEvent(new Event("dataChanged"));
+  }
+
   if (backendError && !backendSuccess) {
     return { success: false, error: backendError };
   }
