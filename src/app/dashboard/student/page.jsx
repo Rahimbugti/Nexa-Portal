@@ -818,43 +818,57 @@ export default function StudentDedicatedDashboardPage() {
         const targetStudentEmail = (matched?.email || activeTargetEmail || savedEmail || "").toLowerCase().trim();
         const targetStudentName = (matched?.full_name || matched?.student_name || savedName || "").toLowerCase().trim();
 
-        // Fetch My Leave Requests
+        const isExactEmailMatch = (emailA, emailB) => {
+          if (!emailA || !emailB) return false;
+          const a = emailA.toLowerCase().trim();
+          const b = emailB.toLowerCase().trim();
+          if (!a.includes("@") || !b.includes("@")) return false;
+          return a === b;
+        };
+
+        const isExactNameMatch = (nameA, nameB) => {
+          if (!nameA || !nameB) return false;
+          const a = nameA.toLowerCase().trim();
+          const b = nameB.toLowerCase().trim();
+          if (a.length < 3 || b.length < 3) return false;
+          const generic = ["member", "student", "intern", "employee", "admin", "staff", "user", "unknown"];
+          if (generic.includes(a) || generic.includes(b)) return false;
+          return a === b;
+        };
+
+        // Fetch My Leave Requests strictly for this user
         let userLeaves = [];
         try {
           const allLeaves = await dbFetch("leaves").catch(() => []);
-          userLeaves = (allLeaves || []).filter(
-            (l) => {
-              const lEmail = (l.applicant_email || l.email || "").toLowerCase().trim();
-              const lName = (l.applicant_name || l.employee_name || "").toLowerCase().trim();
-              return (targetStudentEmail && (lEmail === targetStudentEmail || lEmail.includes(targetStudentEmail))) ||
-                     (targetStudentName && lName.includes(targetStudentName));
-            }
-          );
+          userLeaves = (allLeaves || []).filter((l) => {
+            if (!l) return false;
+            const lEmail = (l.applicant_email || l.email || "").toLowerCase().trim();
+            const lName = (l.applicant_name || l.employee_name || "").toLowerCase().trim();
+            return isExactEmailMatch(lEmail, targetStudentEmail) || isExactNameMatch(lName, targetStudentName);
+          });
           setMyStudentLeaves(userLeaves);
         } catch (e) {}
 
-        // Fetch Attendance Logs & Compute Today's Check-in Record
+        // Fetch Attendance Logs & Compute Today's Check-in Record strictly for this student
         const masterLogs = await dbFetch("attendance").catch(() => []);
-        const studentLogs = (masterLogs || []).filter(
-          (l) => {
-            const lUser = (l.user_id || l.user_email || l.student_id || l.employee_id || "").toLowerCase().trim();
-            const lName = (l.user_name || l.employee_name || "").toLowerCase().trim();
-            return (targetStudentEmail && (lUser === targetStudentEmail || lUser.includes(targetStudentEmail) || targetStudentEmail.includes(lUser))) ||
-                   (targetStudentName && (lName.includes(targetStudentName) || targetStudentName.includes(lName)));
-          }
-        );
+        const studentLogs = (masterLogs || []).filter((l) => {
+          if (!l) return false;
+          const lUser = (l.user_id || l.user_email || l.student_id || l.employee_id || l.email || "").toLowerCase().trim();
+          const lName = (l.user_name || l.employee_name || l.name || "").toLowerCase().trim();
+          return isExactEmailMatch(lUser, targetStudentEmail) || isExactNameMatch(lName, targetStudentName);
+        });
 
-        // Check Today's Attendance strictly for TODAY only
+        // Check Today's Attendance strictly for this specific student only
         const key = `today_attendance_${targetStudentEmail}`;
-        const savedToday = localStorage.getItem(key) || (savedEmail ? localStorage.getItem(`today_attendance_${savedEmail}`) : null);
+        const savedToday = localStorage.getItem(key);
         let currentDayAttendance = null;
 
         if (savedToday) {
           try {
             const parsed = JSON.parse(savedToday);
             if (Array.isArray(parsed)) {
-              currentDayAttendance = parsed.find(r => isRecordFromToday(r) && (r.type === "check_in" || r.check_in_time));
-            } else if (isRecordFromToday(parsed)) {
+              currentDayAttendance = parsed.find(r => isRecordFromToday(r) && (r.type === "check_in" || r.check_in_time) && (isExactEmailMatch(r.user_email || r.email || r.user_id, targetStudentEmail) || isExactNameMatch(r.user_name || r.name, targetStudentName)));
+            } else if (isRecordFromToday(parsed) && (isExactEmailMatch(parsed.user_email || parsed.email, targetStudentEmail) || isExactNameMatch(parsed.user_name, targetStudentName))) {
               currentDayAttendance = parsed;
             }
           } catch (e) {}
