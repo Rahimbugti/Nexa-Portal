@@ -314,8 +314,8 @@ export default function DashboardPage() {
         return false;
       };
 
-      const getTodayAttendanceText = (email, item) => {
-        if (!email) return "Not Clocked In Yet";
+      const getTodayAttendanceDetails = (email, item) => {
+        if (!email) return { checkIn: "--:--", checkOut: "--:--", status: "Not Clocked In Yet" };
         const eClean = email.toLowerCase().trim();
 
         // 1. Check direct database attendance
@@ -326,7 +326,10 @@ export default function DashboardPage() {
         });
 
         if (dbTodayRecord) {
-          return formatPresentText(dbTodayRecord);
+          const checkIn = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "--:--";
+          const checkOut = dbTodayRecord.check_out_time || dbTodayRecord.check_out || "Not Checked Out";
+          const rawStatus = dbTodayRecord.attendance_status || dbTodayRecord.status || (checkOut && checkOut !== "Not Checked Out" && checkOut !== "--:--" ? "Present (Completed) 🟢" : "Present (On Time) 🟢");
+          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
         }
 
         // 2. Direct user local storage log
@@ -338,7 +341,10 @@ export default function DashboardPage() {
         });
 
         if (todayUserLog) {
-          return formatPresentText(todayUserLog);
+          const checkIn = todayUserLog.check_in_time || todayUserLog.check_in || "--:--";
+          const checkOut = todayUserLog.check_out_time || todayUserLog.check_out || "Not Checked Out";
+          const rawStatus = todayUserLog.attendance_status || todayUserLog.status || "Present (On Time) 🟢";
+          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
         }
 
         // 3. Master logs cache
@@ -349,7 +355,10 @@ export default function DashboardPage() {
         });
 
         if (todayMasterLog) {
-          return formatPresentText(todayMasterLog);
+          const checkIn = todayMasterLog.check_in_time || todayMasterLog.check_in || "--:--";
+          const checkOut = todayMasterLog.check_out_time || todayMasterLog.check_out || "Not Checked Out";
+          const rawStatus = todayMasterLog.attendance_status || todayMasterLog.status || "Present (On Time) 🟢";
+          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
         }
 
         // 4. Check Leaves (Approved or Pending)
@@ -361,30 +370,31 @@ export default function DashboardPage() {
         });
 
         if (userLeave) {
-          return `On Leave (${userLeave.leave_type || "Casual"}) 🌴`;
+          return { checkIn: "--:--", checkOut: "--:--", status: `On Leave (${userLeave.leave_type || "Casual"}) 🌴` };
         }
 
         // 5. If user enrolled/registered TODAY and hasn't clocked in yet
         const joinDate = (item?.start_date || item?.created_at || item?.joining_date || "").slice(0, 10);
         if (joinDate === todayStr) {
-          return "Enrolled Today (Pending Clock-In) ⏳";
+          return { checkIn: "--:--", checkOut: "--:--", status: "Enrolled Today (Pending Clock-In) ⏳" };
         }
 
         // 6. If shift is currently active (between 10:00 AM and 06:00 PM) and candidate not checked in yet
         if (currentMins >= 600 && currentMins < 1080) {
-          return "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠";
+          return { checkIn: "--:--", checkOut: "--:--", status: "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠" };
         } else if (currentMins < 600) {
-          return "Shift Starts 10:00 AM ⏳";
+          return { checkIn: "--:--", checkOut: "--:--", status: "Shift Starts 10:00 AM ⏳" };
         }
 
         // 7. Otherwise after 06:00 PM default to Absent Today
-        return "Absent Today 🔴";
+        return { checkIn: "--:--", checkOut: "--:--", status: "Absent Today 🔴" };
       };
 
       const combinedMap = new Map();
 
       persistentEmps.forEach(e => {
         if (!e || !e.email) return;
+        const attInfo = getTodayAttendanceDetails(e.email, e);
         combinedMap.set(e.email.toLowerCase(), {
           id: e.id || `emp-${Date.now()}`,
           fullName: e.full_name || e.name || "Unknown Employee",
@@ -392,7 +402,9 @@ export default function DashboardPage() {
           category: e.employment_type || "On-Site Staff",
           role: "employee",
           department: `${e.department || 'General'} (${e.designation || 'Staff'})`,
-          attendance: getTodayAttendanceText(e.email, e),
+          checkIn: attInfo.checkIn,
+          checkOut: attInfo.checkOut,
+          attendance: attInfo.status,
           progress: "Assigned Software House Deliverables",
           dailyTask: "Logged daily work progress on assigned task.",
           feeStatus: "N/A (Paid Staff)",
@@ -401,6 +413,7 @@ export default function DashboardPage() {
 
       persistentStudents.forEach(s => {
         if (!s || !s.email) return;
+        const attInfo = getTodayAttendanceDetails(s.email, s);
         combinedMap.set(s.email.toLowerCase(), {
           id: s.id || `stu-${Date.now()}`,
           fullName: s.full_name || s.name || "Unknown Student",
@@ -408,7 +421,9 @@ export default function DashboardPage() {
           category: "Course Enrolled Student",
           role: "student",
           department: s.course_name || "MERN Stack Course",
-          attendance: getTodayAttendanceText(s.email, s),
+          checkIn: attInfo.checkIn,
+          checkOut: attInfo.checkOut,
+          attendance: attInfo.status,
           progress: `${s.progress !== undefined ? s.progress : 0}% Course Completed`,
           dailyTask: "Submitted daily practical coding lab assignment.",
           feeStatus: s.fee_status || "Paid",
@@ -417,6 +432,7 @@ export default function DashboardPage() {
 
       persistentInterns.forEach(i => {
         if (!i || !i.email) return;
+        const attInfo = getTodayAttendanceDetails(i.email, i);
         combinedMap.set(i.email.toLowerCase(), {
           id: i.id || `int-${Date.now()}`,
           fullName: i.full_name || i.name || "Unknown Intern",
@@ -424,7 +440,9 @@ export default function DashboardPage() {
           category: i.internship_mode?.includes("Remote") ? "Remote 3-Month Intern" : "On-Site 3-Month Intern",
           role: "intern",
           department: i.course_name || i.domain || "Software Engineering Intern",
-          attendance: getTodayAttendanceText(i.email, i),
+          checkIn: attInfo.checkIn,
+          checkOut: attInfo.checkOut,
+          attendance: attInfo.status,
           progress: `${i.progress !== undefined ? i.progress : 0}% Internship Milestone Completed`,
           dailyTask: i.task_logs?.[0]?.details || "Working on assigned project module.",
           feeStatus: "Free Internship",
@@ -703,15 +721,16 @@ export default function DashboardPage() {
               <tr>
                 <th className="py-3 px-4">Member Name & Email</th>
                 <th className="py-3 px-4">Role / Category</th>
-                <th className="py-3 px-4">Department / Program</th>
-                <th className="py-3 px-4">Today's Attendance</th>
+                <th className="py-3 px-4">Check-In</th>
+                <th className="py-3 px-4">Check-Out</th>
+                <th className="py-3 px-4">Today's Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] font-normal">
               {filteredMembersList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-10 text-center text-[#64748B] italic">
+                  <td colSpan={6} className="py-10 text-center text-[#64748B] italic">
                     No registered members matching criteria.
                   </td>
                 </tr>
@@ -725,7 +744,7 @@ export default function DashboardPage() {
                         </div>
                         <div>
                           <p className="font-semibold text-[#0F172A] group-hover:text-[#2563EB] transition-colors">
-                            {m.fullName || "Unknown Employee"}
+                            {m.fullName || "Unknown Member"}
                           </p>
                           <p className="text-[11px] font-mono text-[#64748B]">{m.email}</p>
                         </div>
@@ -733,22 +752,29 @@ export default function DashboardPage() {
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <span className="text-[10px] font-semibold uppercase px-2.5 py-1 rounded-md border border-[#E2E8F0] bg-[#F8FAFC] text-[#0F172A]">
+                      <span className="text-[10px] font-semibold uppercase px-2.5 py-1 rounded-md border border-[#E2E8F0] bg-[#F8FAFC] text-[#0F172A] whitespace-nowrap">
                         {m.category || "General Member"}
                       </span>
                     </td>
 
-                    <td className="py-3.5 px-4 font-medium text-[#0F172A]">
-                      {m.department || "Unassigned Department"}
+                    <td className="py-3.5 px-4 font-mono font-bold text-xs text-[#0F172A] whitespace-nowrap">
+                      {m.checkIn || "--:--"}
                     </td>
 
-                    {/* Status Badges: Present (#EFF6FF, #2563EB), Absent (#F1F5F9, #475569) */}
+                    <td className="py-3.5 px-4 font-mono text-xs text-slate-600 whitespace-nowrap">
+                      {m.checkOut || "--:--"}
+                    </td>
+
                     <td className="py-3.5 px-4">
                       <span
-                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-md border ${
-                          m.attendance.includes("Present")
+                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-md border whitespace-nowrap ${
+                          m.attendance.includes("Present") || m.attendance.includes("🟢")
                             ? "bg-[#EFF6FF] text-[#2563EB] border-[#2563EB]/20"
-                            : "bg-[#F1F5F9] text-[#475569] border-[#E2E8F0]"
+                            : (m.attendance.includes("Leave") || m.attendance.includes("🌴")
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : (m.attendance.includes("Pending") || m.attendance.includes("Shift")
+                                    ? "bg-slate-50 text-slate-700 border-slate-200"
+                                    : "bg-[#FEE2E2] text-[#991B1B] border-[#EF4444]/20"))
                         }`}
                       >
                         {m.attendance}
@@ -768,13 +794,12 @@ export default function DashboardPage() {
                             <span>Screen 🖥️</span>
                           </Link>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedUserModal(m)}
-                          className="text-[#2563EB] hover:text-[#1D4ED8] font-semibold hover:bg-[#EFF6FF] px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                        <Link
+                          href="/dashboard/attendance/history"
+                          className="text-[#2563EB] hover:text-[#1D4ED8] font-semibold hover:bg-[#EFF6FF] px-2.5 py-1 rounded-lg transition-colors text-xs"
                         >
                           Inspect →
-                        </button>
+                        </Link>
                       </div>
                     </td>
                   </tr>
