@@ -1844,9 +1844,6 @@ export default function StudentDedicatedDashboardPage() {
                   <span>Access Remote Screen 👁️</span>
                 </button>
               )}
-                  <span>Access Remote Screen 👁️</span>
-                </button>
-              )}
             </div>
           </div>
         </div>
