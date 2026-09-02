@@ -260,19 +260,19 @@ export async function POST(request) {
         const checkOutTime = convertTo24HourTime(record.check_out || record.check_out_time);
 
         let empUuid = null;
-        const targetEmail = (record.employee_id || record.user_email || record.email || record.student_id || record.user_id || "").toLowerCase().trim();
-        const targetName = (record.user_name || record.employee_name || record.name || record.student_name || "").toLowerCase().trim();
+        const targetEmail = (record.user_email || record.email || record.student_id || record.employee_id || "").toLowerCase().trim();
+        const targetName = (record.user_name || record.name || record.full_name || record.employee_name || "").trim();
 
         if (targetEmail) {
-          const { data: empData } = await supabase.from("employees").select("id").eq("email", targetEmail).limit(1);
+          const { data: empData } = await supabase.from("employees").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
           if (empData && empData[0]) {
             empUuid = empData[0].id;
           } else {
-            const { data: stuData } = await supabase.from("students").select("id").eq("email", targetEmail).limit(1);
+            const { data: stuData } = await supabase.from("students").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
             if (stuData && stuData[0]) {
               empUuid = stuData[0].id;
             } else {
-              const { data: intData } = await supabase.from("interns").select("id").eq("email", targetEmail).limit(1);
+              const { data: intData } = await supabase.from("interns").select("id").ilike("email", targetEmail).limit(1).catch(() => ({ data: [] }));
               if (intData && intData[0]) {
                 empUuid = intData[0].id;
               }
@@ -281,15 +281,15 @@ export async function POST(request) {
         }
 
         if (!empUuid && targetName) {
-          const { data: empNameData } = await supabase.from("employees").select("id").ilike("full_name", `%${targetName}%`).limit(1);
+          const { data: empNameData } = await supabase.from("employees").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
           if (empNameData && empNameData[0]) {
             empUuid = empNameData[0].id;
           } else {
-            const { data: stuNameData } = await supabase.from("students").select("id").ilike("full_name", `%${targetName}%`).limit(1);
+            const { data: stuNameData } = await supabase.from("students").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
             if (stuNameData && stuNameData[0]) {
               empUuid = stuNameData[0].id;
             } else {
-              const { data: intNameData } = await supabase.from("interns").select("id").ilike("full_name", `%${targetName}%`).limit(1);
+              const { data: intNameData } = await supabase.from("interns").select("id").ilike("full_name", `%${targetName}%`).limit(1).catch(() => ({ data: [] }));
               if (intNameData && intNameData[0]) {
                 empUuid = intNameData[0].id;
               }
@@ -314,14 +314,18 @@ export async function POST(request) {
         if (empUuid) {
           existingQuery = existingQuery.eq("employee_id", empUuid);
         }
-        const { data: existingRows } = await existingQuery.limit(1);
+        const { data: existingRows } = await existingQuery.limit(1).catch(() => ({ data: [] }));
 
+        let dbSaved = false;
         if (existingRows && existingRows.length > 0) {
-          await supabase.from("attendance").update(attPayload).eq("id", existingRows[0].id);
+          const { error: updateErr } = await supabase.from("attendance").update(attPayload).eq("id", existingRows[0].id);
+          if (!updateErr) dbSaved = true;
         } else {
-          await supabase.from("attendance").insert([attPayload]);
+          const { error: insertErr } = await supabase.from("attendance").insert([attPayload]);
+          if (!insertErr) dbSaved = true;
         }
-        return NextResponse.json({ success: true });
+
+        return NextResponse.json({ success: true, saved: dbSaved });
       }
 
       // 2.2 Students (Student Attendance support)
