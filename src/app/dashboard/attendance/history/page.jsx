@@ -40,11 +40,33 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  // Clean user's registration/start date strictly
-  let cleanStartDateStr = todayStr;
+  // Determine earliest date of actual candidate activity
+  let earliestActiveDate = todayStr;
+
+  if (rawLogs && rawLogs.length > 0) {
+    rawLogs.forEach((l) => {
+      const lDate = (l.attendance_date || l.date || (l.timestamp ? l.timestamp.split("T")[0] : "")).slice(0, 10);
+      if (lDate && lDate.length === 10 && lDate < earliestActiveDate && lDate >= "2026-01-01") {
+        earliestActiveDate = lDate;
+      }
+    });
+  }
+
+  if (leaves && leaves.length > 0) {
+    leaves.forEach((l) => {
+      const lStart = (l.start_date || l.applied_at || "").slice(0, 10);
+      if (lStart && lStart.length === 10 && lStart < earliestActiveDate && lStart >= "2026-01-01") {
+        earliestActiveDate = lStart;
+      }
+    });
+  }
+
+  // Registration/joining date cutoff: never exceed earliest logged activity
+  let cleanStartDateStr = earliestActiveDate;
   if (startDate && String(startDate).length >= 10) {
     const sStr = String(startDate).slice(0, 10);
-    if (sStr !== "2026-06-01" && sStr !== "2026-05-01" && sStr !== "2026-08-01") {
+    // If startDate is newer than or equal to earliest active log, use it
+    if (sStr >= earliestActiveDate && sStr <= todayStr) {
       cleanStartDateStr = sStr;
     }
   }
@@ -52,7 +74,7 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
   const calendar = [];
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  // Step backwards from today strictly down to registration date
+  // Step backwards from today strictly down to cleanStartDateStr
   let currDate = new Date();
   let safetyLimit = 365;
 
@@ -64,7 +86,7 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
     const dateStr = `${year}-${month}-${dayNum}`;
 
     if (dateStr < cleanStartDateStr) {
-      break; // Reached registration day — STOP! No older fake attendance entries!
+      break; // Reached registration / first activity day — STOP! No older fake attendance entries!
     }
 
     const dayOfWeek = currDate.getDay(); // 0 = Sunday

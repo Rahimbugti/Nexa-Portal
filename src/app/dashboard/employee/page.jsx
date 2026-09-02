@@ -41,11 +41,32 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  // Employee joining date is the strict hard cutoff boundary
-  let cleanStartDateStr = todayStr;
+  // Determine earliest date of actual candidate activity
+  let earliestActiveDate = todayStr;
+
+  if (rawLogs && rawLogs.length > 0) {
+    rawLogs.forEach((l) => {
+      const lDate = (l.attendance_date || l.date || (l.timestamp ? l.timestamp.split("T")[0] : "")).slice(0, 10);
+      if (lDate && lDate.length === 10 && lDate < earliestActiveDate && lDate >= "2026-01-01") {
+        earliestActiveDate = lDate;
+      }
+    });
+  }
+
+  if (leaves && leaves.length > 0) {
+    leaves.forEach((l) => {
+      const lStart = (l.start_date || l.applied_at || "").slice(0, 10);
+      if (lStart && lStart.length === 10 && lStart < earliestActiveDate && lStart >= "2026-01-01") {
+        earliestActiveDate = lStart;
+      }
+    });
+  }
+
+  // Employee joining date cutoff: never exceed earliest logged activity
+  let cleanStartDateStr = earliestActiveDate;
   if (joiningDate && String(joiningDate).length >= 10) {
     const sStr = String(joiningDate).slice(0, 10);
-    if (sStr !== "2026-06-01" && sStr !== "2026-05-01" && sStr !== "2026-08-01") {
+    if (sStr >= earliestActiveDate && sStr <= todayStr) {
       cleanStartDateStr = sStr;
     }
   }
@@ -53,7 +74,7 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
   const calendar = [];
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  // Step backwards from today strictly down to joining date
+  // Step backwards from today strictly down to cleanStartDateStr
   let currDate = new Date();
   let safetyLimit = 365;
 
