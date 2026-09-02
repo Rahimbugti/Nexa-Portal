@@ -149,10 +149,27 @@ export async function POST(request) {
         if (!error) deleted = true; else errRes = error;
       }
 
-      // Try deleting by email
+      // Try deleting by email across table and related tables
       if (cleanEmail) {
         const { error } = await supabase.from(table).delete().eq("email", cleanEmail);
         if (!error) deleted = true; else if (!errRes) errRes = error;
+
+        // Cascade delete across all user entity tables
+        await supabase.from("interns").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("students").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("employees").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("app_users").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("payrolls").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("performances").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("monitoring_sessions").delete().eq("user_email", cleanEmail).catch(() => {});
+      }
+
+      // Try deleting by full_name or name if provided
+      const cleanName = (full_name || name || "").trim();
+      if (cleanName) {
+        await supabase.from("interns").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
+        await supabase.from("students").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
+        await supabase.from("employees").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
       }
 
       // For tasks or projects, delete by title if ID was local/temporary
@@ -168,13 +185,6 @@ export async function POST(request) {
         if (existing && existing.length > 0) {
           await supabase.from("attendance").delete().eq("id", existing[0].id);
         }
-      }
-
-      if (cleanEmail && (table === "employees" || table === "students" || table === "interns" || table === "performances" || table === "payrolls")) {
-        await supabase.from("app_users").delete().eq("email", cleanEmail).catch(() => { });
-        await supabase.from("payrolls").delete().eq("email", cleanEmail).catch(() => { });
-        await supabase.from("performances").delete().eq("email", cleanEmail).catch(() => { });
-        await supabase.from("employees").delete().eq("email", cleanEmail).catch(() => { });
       }
 
       return NextResponse.json({ success: true, deleted: true, error: errRes ? errRes.message : null });

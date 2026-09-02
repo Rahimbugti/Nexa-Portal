@@ -635,12 +635,30 @@ export default function InternshipsPage() {
     if (!deleteModal.intern) return;
     setDeleteModal(prev => ({ ...prev, loading: true }));
     const id = deleteModal.intern.id;
+    const email = (deleteModal.intern.email || "").toLowerCase().trim();
+    const name = deleteModal.intern.full_name || deleteModal.intern.name || "";
 
     try {
-      const updated = interns.filter((i) => i.id !== id);
+      const updated = interns.filter((i) => i.id !== id && (i.email || "").toLowerCase().trim() !== email);
       setInterns(updated);
-      await dbDeleteRecord("interns", id, deleteModal.intern.email || "").catch(() => { });
-      showToast("Intern Deleted 🗑️", "Internship record removed successfully.", "info");
+
+      await dbDeleteRecord("interns", id, email).catch(() => { });
+      await dbDeleteRecord("students", id, email).catch(() => { });
+
+      // Direct permanent delete call with name and email to guarantee purge from PostgreSQL
+      if (typeof fetch !== "undefined") {
+        await fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: "interns",
+            action: "delete",
+            record: { id, email, full_name: name },
+          }),
+        }).catch(() => {});
+      }
+
+      showToast("Intern Deleted 🗑️", `${name || "Intern"} removed permanently.`, "info");
     } catch (e) {
       showToast("Error", "Failed to delete intern record.", "error");
     } finally {
