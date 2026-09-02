@@ -75,13 +75,23 @@ export async function GET(request) {
 
     if (table === "attendance" && Array.isArray(data)) {
       try {
-        const { data: allEmps } = await supabase.from("employees").select("id, full_name, email");
-        const empMap = new Map((allEmps || []).map(e => [e.id, e]));
+        const [allEmps, allStudents, allInterns] = await Promise.all([
+          supabase.from("employees").select("id, full_name, email").then(r => r.data || []),
+          supabase.from("students").select("id, full_name, email").then(r => r.data || []),
+          supabase.from("interns").select("id, full_name, email").then(r => r.data || []),
+        ]);
+
+        const userMap = new Map();
+        [...allEmps, ...allStudents, ...allInterns].forEach(u => {
+          if (u.id) userMap.set(String(u.id).toLowerCase(), u);
+          if (u.email) userMap.set(u.email.toLowerCase().trim(), u);
+        });
 
         data = data.map(item => {
-          const emp = empMap.get(item.employee_id);
-          const email = emp?.email || item.employee_id || "employee@example.com";
-          const name = emp?.full_name || "";
+          const empIdStr = String(item.employee_id || item.user_email || item.email || "").toLowerCase().trim();
+          const user = userMap.get(empIdStr) || userMap.get(String(item.id || "").toLowerCase());
+          const email = user?.email || (empIdStr.includes("@") ? empIdStr : "member@nexa.com");
+          const name = user?.full_name || item.name || item.user_name || "";
           return {
             id: item.id,
             employee_id: email,
@@ -215,6 +225,11 @@ export async function POST(request) {
             const { data: stuData } = await supabase.from("students").select("id").eq("email", targetEmail).limit(1);
             if (stuData && stuData[0]) {
               empUuid = stuData[0].id;
+            } else {
+              const { data: intData } = await supabase.from("interns").select("id").eq("email", targetEmail).limit(1);
+              if (intData && intData[0]) {
+                empUuid = intData[0].id;
+              }
             }
           }
         }
@@ -227,8 +242,17 @@ export async function POST(request) {
             const { data: stuNameData } = await supabase.from("students").select("id").ilike("full_name", `%${targetName}%`).limit(1);
             if (stuNameData && stuNameData[0]) {
               empUuid = stuNameData[0].id;
+            } else {
+              const { data: intNameData } = await supabase.from("interns").select("id").ilike("full_name", `%${targetName}%`).limit(1);
+              if (intNameData && intNameData[0]) {
+                empUuid = intNameData[0].id;
+              }
             }
           }
+        }
+
+        if (!empUuid) {
+          empUuid = targetEmail || `user-${Date.now()}`;
         }
 
         const attPayload = {
