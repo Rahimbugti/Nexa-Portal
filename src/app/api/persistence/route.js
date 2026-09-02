@@ -154,19 +154,24 @@ export async function POST(request) {
         const { error } = await supabase.from(table).delete().eq("email", cleanEmail);
         if (!error) deleted = true; else if (!errRes) errRes = error;
 
-        // Cascade delete across all user entity tables
-        await supabase.from("interns").delete().eq("email", cleanEmail).catch(() => {});
+        // Cascade permanent purge across ALL tables for this email
         await supabase.from("students").delete().eq("email", cleanEmail).catch(() => {});
+        await supabase.from("interns").delete().eq("email", cleanEmail).catch(() => {});
         await supabase.from("employees").delete().eq("email", cleanEmail).catch(() => {});
         await supabase.from("app_users").delete().eq("email", cleanEmail).catch(() => {});
         await supabase.from("payrolls").delete().eq("email", cleanEmail).catch(() => {});
         await supabase.from("performances").delete().eq("email", cleanEmail).catch(() => {});
         await supabase.from("monitoring_sessions").delete().eq("user_email", cleanEmail).catch(() => {});
+        await supabase.from("attendance").delete().or(`user_email.eq.${cleanEmail},email.eq.${cleanEmail},student_id.eq.${cleanEmail}`).catch(() => {});
+        await supabase.from("daily_tasks").delete().or(`assigned_to_email.eq.${cleanEmail},email.eq.${cleanEmail}`).catch(() => {});
+        await supabase.from("leaves").delete().or(`applicant_email.eq.${cleanEmail},email.eq.${cleanEmail}`).catch(() => {});
+        await supabase.from("screenshot_logs").delete().or(`email.eq.${cleanEmail},employeeId.eq.${cleanEmail}`).catch(() => {});
+        await supabase.from("activity_logs").delete().or(`email.eq.${cleanEmail},employeeId.eq.${cleanEmail}`).catch(() => {});
       }
 
       // Try deleting by full_name or name if provided
       const cleanName = (full_name || name || "").trim();
-      if (cleanName) {
+      if (cleanName && cleanName.length >= 3) {
         await supabase.from("interns").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
         await supabase.from("students").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});
         await supabase.from("employees").delete().ilike("full_name", `%${cleanName}%`).catch(() => {});

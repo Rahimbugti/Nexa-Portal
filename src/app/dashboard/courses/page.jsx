@@ -593,33 +593,38 @@ export default function CoursesPage() {
     if (!deleteModal.student) return;
     setDeleteModal(prev => ({ ...prev, loading: true }));
     const id = deleteModal.student.id;
-    const email = deleteModal.student.email;
+    const email = (deleteModal.student.email || "").toLowerCase().trim();
+    const name = deleteModal.student.full_name || deleteModal.student.name || "";
 
     try {
-      const filtered = students.filter((s) => s.id !== id && (email ? s.email !== email : true));
+      const filtered = students.filter((s) => s.id !== id && (email ? (s.email || "").toLowerCase().trim() !== email : true));
       setStudents(filtered);
       dbDeleteRecord("students", id, email || "").catch(() => {});
+      dbDeleteRecord("interns", id, email || "").catch(() => {});
+      
       fetch("/api/persistence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "students", record: { id, email }, action: "delete" })
+        body: JSON.stringify({ table: "students", record: { id, email, full_name: name }, action: "delete" })
       }).catch(() => {});
 
       // Clean up local system user registration caches
       if (email) {
         try {
-          const cleanEm = email.toLowerCase().trim();
           const sysUsers = JSON.parse(localStorage.getItem("registered_system_users") || "[]");
-          const updatedSys = sysUsers.filter(u => (u.email || "").toLowerCase().trim() !== cleanEm);
+          const updatedSys = sysUsers.filter(u => (u.email || "").toLowerCase().trim() !== email);
           localStorage.setItem("registered_system_users", JSON.stringify(updatedSys));
 
           const masterStu = JSON.parse(localStorage.getItem("software_house_master_students") || "[]");
-          const updatedMaster = masterStu.filter(s => (s.email || "").toLowerCase().trim() !== cleanEm && s.id !== id);
+          const updatedMaster = masterStu.filter(s => (s.email || "").toLowerCase().trim() !== email && s.id !== id);
           localStorage.setItem("software_house_master_students", JSON.stringify(updatedMaster));
+
+          // Clear today attendance cache for this student
+          localStorage.removeItem(`today_attendance_${email}`);
         } catch (e) {}
       }
 
-      showToast("Student Removed 🗑️", "Student record removed permanently from database.", "info");
+      showToast("Student Removed 🗑️", `${name || "Student"} removed permanently from database.`, "info");
     } catch(e) {
       showToast("Error", "Failed to delete student record.", "error");
     } finally {
