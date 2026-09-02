@@ -231,7 +231,12 @@ export default function CoursesPage() {
     ];
 
     dbFetch("students", [], true).then((data) => {
-      // Deduplicate students list by unique email and ID
+      let blacklist = [];
+      try {
+        blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+      } catch (e) {}
+
+      // Deduplicate students list by unique email and ID, excluding blacklisted records
       const uniqueStudents = [];
       const seenEmails = new Set();
       const seenIds = new Set();
@@ -241,7 +246,7 @@ export default function CoursesPage() {
         const cleanEm = (s.email || "").toLowerCase().trim();
         const cleanId = (s.id || s.student_id || "").toString();
 
-        if (cleanEm && seenEmails.has(cleanEm)) return;
+        if (cleanEm && (seenEmails.has(cleanEm) || blacklist.includes(cleanEm))) return;
         if (cleanId && seenIds.has(cleanId)) return;
 
         if (cleanEm) seenEmails.add(cleanEm);

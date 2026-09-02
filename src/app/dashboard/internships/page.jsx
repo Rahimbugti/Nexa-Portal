@@ -532,7 +532,15 @@ export default function InternshipsPage() {
   const fetchInterns = async () => {
     setLoading(true);
     const data = await dbFetch("interns", [], true);
-    setInterns(data || []);
+    let blacklist = [];
+    try {
+      blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+    } catch (e) {}
+    const cleanList = (data || []).filter(i => {
+      const em = (i.email || "").toLowerCase().trim();
+      return em && !blacklist.includes(em);
+    });
+    setInterns(cleanList);
     setLoading(false);
   };
 
@@ -641,6 +649,15 @@ export default function InternshipsPage() {
     try {
       const updated = interns.filter((i) => i.id !== id && (i.email || "").toLowerCase().trim() !== email);
       setInterns(updated);
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("persistent_interns", JSON.stringify(updated));
+        const blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+        if (email && !blacklist.includes(email)) {
+          blacklist.push(email);
+          localStorage.setItem("deleted_entity_blacklist", JSON.stringify(blacklist));
+        }
+      }
 
       await dbDeleteRecord("interns", id, email).catch(() => { });
       await dbDeleteRecord("students", id, email).catch(() => { });
