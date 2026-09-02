@@ -40,22 +40,13 @@ function buildTargetUserAttendanceCalendar({ rawLogs, leaves, startDate, todayRe
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  // Find earliest actual log date if any
-  let earliestLogDate = null;
-  if (Array.isArray(rawLogs) && rawLogs.length > 0) {
-    const validDates = rawLogs
-      .map((l) => (l.attendance_date || l.date || (l.timestamp ? l.timestamp.split("T")[0] : "")).slice(0, 10))
-      .filter((d) => d && d <= todayStr)
-      .sort();
-    if (validDates.length > 0) {
-      earliestLogDate = validDates[0];
+  // Clean user's registration/start date strictly
+  let cleanStartDateStr = todayStr;
+  if (startDate && String(startDate).length >= 10) {
+    const sStr = String(startDate).slice(0, 10);
+    if (sStr !== "2026-06-01" && sStr !== "2026-05-01" && sStr !== "2026-08-01") {
+      cleanStartDateStr = sStr;
     }
-  }
-
-  // Clean user's registration/start date
-  let cleanStartDateStr = startDate ? String(startDate).slice(0, 10) : todayStr;
-  if (!cleanStartDateStr || cleanStartDateStr === "2026-06-01" || cleanStartDateStr === "2026-05-01" || cleanStartDateStr === "2026-08-01") {
-    cleanStartDateStr = earliestLogDate || todayStr;
   }
 
   const calendar = [];
@@ -311,20 +302,30 @@ export default function AdminAttendanceHistoryHub() {
     const uEmail = user.email.toLowerCase().trim();
     const uName = user.name.toLowerCase().trim();
 
-    // 1. Filter user logs
+    // 1. Filter user logs with strict matching
     const userLogs = (currentLogs || []).filter((l) => {
       const lEmail = (l.user_email || l.email || l.employee_id || l.student_id || l.user_id || "").toLowerCase().trim();
       const lName = (l.user_name || l.employee_name || l.name || "").toLowerCase().trim();
-      return (uEmail && (lEmail === uEmail || lEmail.includes(uEmail) || uEmail.includes(lEmail))) ||
-             (uName && (lName.includes(uName) || uName.includes(lName)));
+      if (uEmail && lEmail) {
+        return lEmail === uEmail;
+      }
+      if (uName && lName && uName.length >= 3) {
+        return lName === uName;
+      }
+      return false;
     });
 
-    // 2. Filter user leaves
+    // 2. Filter user leaves with strict matching
     const userLeaves = (currentLeaves || []).filter((l) => {
       const lEmail = (l.applicant_email || l.email || "").toLowerCase().trim();
       const lName = (l.applicant_name || l.employee_name || "").toLowerCase().trim();
-      return (uEmail && (lEmail === uEmail || lEmail.includes(uEmail))) ||
-             (uName && lName.includes(uName));
+      if (uEmail && lEmail) {
+        return lEmail === uEmail;
+      }
+      if (uName && lName && uName.length >= 3) {
+        return lName === uName;
+      }
+      return false;
     });
 
     // 3. Check today record
