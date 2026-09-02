@@ -41,21 +41,34 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
 
-  const sDate = new Date(joiningDate || "2026-08-01");
-  const eDate = new Date();
-  const minAllowedDate = new Date();
-  minAllowedDate.setDate(minAllowedDate.getDate() - 30);
-  const effectiveStartDate = sDate > minAllowedDate ? sDate : minAllowedDate;
+  // Employee joining date is the strict hard cutoff boundary
+  let cleanStartDateStr = todayStr;
+  if (joiningDate && String(joiningDate).length >= 10) {
+    const sStr = String(joiningDate).slice(0, 10);
+    if (sStr !== "2026-06-01" && sStr !== "2026-05-01" && sStr !== "2026-08-01") {
+      cleanStartDateStr = sStr;
+    }
+  }
 
   const calendar = [];
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  for (let d = new Date(eDate); d >= effectiveStartDate; d.setDate(d.getDate() - 1)) {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const dayNum = String(d.getDate()).padStart(2, "0");
+  // Step backwards from today strictly down to joining date
+  let currDate = new Date();
+  let safetyLimit = 365;
+
+  while (safetyLimit > 0) {
+    safetyLimit--;
+    const year = currDate.getFullYear();
+    const month = String(currDate.getMonth() + 1).padStart(2, "0");
+    const dayNum = String(currDate.getDate()).padStart(2, "0");
     const dateStr = `${year}-${month}-${dayNum}`;
-    const dayOfWeek = d.getDay(); // 0 = Sunday
+
+    if (dateStr < cleanStartDateStr) {
+      break; // Reached joining day — STOP! No older fake attendance entries!
+    }
+
+    const dayOfWeek = currDate.getDay(); // 0 = Sunday
     const dayName = dayNames[dayOfWeek];
 
     // 1. Check rawLogs for attendance on this date
@@ -71,15 +84,15 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
       return lStart && lEnd && dateStr >= lStart && dateStr <= lEnd && (l.status === "approved" || l.status === "pending");
     });
 
-    if (dateStr === todayStr && todayRecord && todayRecord.check_in_time) {
+    if (dateStr === todayStr && todayRecord && (todayRecord.check_in_time || todayRecord.type === "check_in")) {
       calendar.push({
         id: todayRecord.id || `att-${dateStr}`,
         attendance_date: dateStr,
         date: dateStr,
         day_name: dayName,
-        check_in_time: todayRecord.check_in_time,
+        check_in_time: todayRecord.check_in_time || "Clocked In",
         check_out_time: todayRecord.check_out_time || "Not Checked Out",
-        attendance_status: todayRecord.attendance_status || todayRecord.status || "On Time",
+        attendance_status: todayRecord.attendance_status || todayRecord.status || "Present (On Time)",
         is_today: true,
       });
     } else if (matchedLog && (matchedLog.check_in_time || matchedLog.type === "check_in" || (matchedLog.attendance_status && matchedLog.attendance_status !== "Absent"))) {
@@ -93,7 +106,7 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
           matchedLog.check_out_time && matchedLog.check_out_time !== "Not Checked Out" && matchedLog.check_out_time !== "--:--"
             ? matchedLog.check_out_time
             : (dateStr === todayStr ? "Not Checked Out" : "06:00 PM"),
-        attendance_status: matchedLog.attendance_status || matchedLog.status || "On Time",
+        attendance_status: matchedLog.attendance_status || matchedLog.status || "Present (On Time)",
       });
     } else if (matchedLeave) {
       calendar.push({
@@ -118,31 +131,18 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
         is_sunday: true,
       });
     } else if (dateStr === todayStr) {
-      if (currentMins >= 1080) { // After 6:00 PM
-        calendar.push({
-          id: `today-absent-${dateStr}`,
-          attendance_date: dateStr,
-          date: dateStr,
-          day_name: dayName,
-          check_in_time: "--:--",
-          check_out_time: "--:--",
-          attendance_status: "Absent (Shift Ended 06:00 PM) 🔴",
-          is_absent: true,
-          is_today: true,
-        });
-      } else {
-        calendar.push({
-          id: `today-pending-${dateStr}`,
-          attendance_date: dateStr,
-          date: dateStr,
-          day_name: dayName,
-          check_in_time: "--:--",
-          check_out_time: "--:--",
-          attendance_status: currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : "Not Checked In (Shift 10:00 AM - 06:00 PM) 🟠",
-          is_pending: true,
-          is_today: true,
-        });
-      }
+      calendar.push({
+        id: `today-pending-${dateStr}`,
+        attendance_date: dateStr,
+        date: dateStr,
+        day_name: dayName,
+        check_in_time: "--:--",
+        check_out_time: "--:--",
+        attendance_status: currentMins < 600 ? "Shift Starts 10:00 AM ⏳" : (currentMins >= 1080 ? "Absent Today 🔴" : "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠"),
+        is_pending: currentMins < 1080,
+        is_absent: currentMins >= 1080,
+        is_today: true,
+      });
     } else {
       calendar.push({
         id: `absent-${dateStr}`,
@@ -155,6 +155,8 @@ const buildFullEmployeeAttendanceCalendar = ({ rawLogs, leaves, joiningDate, tod
         is_absent: true,
       });
     }
+
+    currDate.setDate(currDate.getDate() - 1);
   }
 
   return calendar;
