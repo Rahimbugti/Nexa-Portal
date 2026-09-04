@@ -35,8 +35,11 @@ import {
   FaCheck,
   FaChevronRight,
   FaEdit,
-  FaUsers
+  FaUsers,
+  FaFilePdf,
+  FaUser
 } from "react-icons/fa";
+import { generatePrintableAttendanceListPdf, generateSingleUserAttendancePdf } from "@/lib/generateAttendancePdf";
 
 /* ─────────────────────────────────────────────────────────────────────────
    TODAY'S ACTIVE SESSION BREAKDOWN
@@ -211,6 +214,8 @@ export default function AttendancePage() {
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, record: null, loading: false });
   const [inspectModal, setInspectModal] = useState(null);
   const [showIpManagerModal, setShowIpManagerModal] = useState(false);
+  const [showUserPdfModal, setShowUserPdfModal] = useState(false);
+  const [userPdfSearch, setUserPdfSearch] = useState("");
   const [customOfficeIp, setCustomOfficeIp] = useState("39.46.102.129");
 
   // Attendance Policy Edit Modal State
@@ -758,6 +763,83 @@ export default function AttendancePage() {
     a.click();
   };
 
+  const handleExportPdf = () => {
+    try {
+      generatePrintableAttendanceListPdf({
+        title: "Organization Live Attendance Records",
+        subtitle: `Filter: ${adminFilter.toUpperCase()} | Total Logged: ${filteredSystemLogs.length}`,
+        reportDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+        filterInfo: `Category: ${adminFilter} | Search Query: ${tableSearch || 'None'}`,
+        records: filteredSystemLogs,
+        generatedBy: user?.user_metadata?.full_name || user?.email || "Admin Supervisor"
+      });
+      showToast("PDF Ready 📄", "Attendance list opened for printing or PDF download.", "success");
+    } catch(e) {
+      console.error(e);
+      showToast("PDF Error", "Failed to generate attendance PDF.", "error");
+    }
+  };
+
+  // Export Dedicated Single User Attendance List PDF
+  const handleExportSingleUserPdf = (targetRecord) => {
+    try {
+      const targetUserId = targetRecord.user_id || targetRecord.id;
+      const targetEmail = (targetRecord.user_email || targetRecord.email || "").toLowerCase().trim();
+      const targetName = (targetRecord.user_name || targetRecord.name || "").toLowerCase().trim();
+
+      const userLogs = allSystemLogs.filter((l) => {
+        const lId = l.user_id || l.id;
+        const lEmail = (l.user_email || l.email || "").toLowerCase().trim();
+        const lName = (l.user_name || l.name || "").toLowerCase().trim();
+
+        if (targetUserId && lId && lId === targetUserId) return true;
+        if (targetEmail && lEmail && lEmail === targetEmail) return true;
+        if (targetName && lName && lName === targetName) return true;
+        return false;
+      });
+
+      const finalRecords = userLogs.length > 0 ? userLogs : [targetRecord];
+
+      generateSingleUserAttendancePdf({
+        user: targetRecord,
+        records: finalRecords,
+        generatedBy: user?.user_metadata?.full_name || user?.email || "Admin Supervisor"
+      });
+      showToast("PDF Ready 📄", `Attendance list generated for ${targetRecord.user_name || targetRecord.name || 'User'}.`, "success");
+    } catch (e) {
+      console.error(e);
+      showToast("PDF Error", "Failed to generate individual user attendance PDF.", "error");
+    }
+  };
+
+  // Unique Users List for the PDF Modal
+  const uniqueUsersInLogs = useMemo(() => {
+    const map = new Map();
+    allSystemLogs.forEach((log) => {
+      const emailKey = (log.user_email || log.email || "").toLowerCase().trim();
+      const nameKey = (log.user_name || log.name || "").toLowerCase().trim();
+      const idKey = log.user_id || log.id || "";
+      const primaryKey = emailKey || idKey || nameKey;
+      if (!primaryKey) return;
+
+      if (!map.has(primaryKey)) {
+        map.set(primaryKey, {
+          user_id: log.user_id || log.id,
+          user_name: log.user_name || log.name || "Candidate",
+          user_email: log.user_email || log.email || "",
+          user_role: log.user_role || log.role || "Staff",
+          recordsCount: 1,
+          latestDate: log.attendance_date || log.date || "",
+          status: log.attendance_status || "Present"
+        });
+      } else {
+        const item = map.get(primaryKey);
+        item.recordsCount += 1;
+      }
+    });
+    return Array.from(map.values());
+  }, [allSystemLogs]);
+
   const currentRole = user?.user_metadata?.role || userRole || "employee";
   const isStudentRole = currentRole === "student" || currentRole === "course_student";
   const { lightColor, label: policyLabel } = determineAttendanceState(currentRole, currentMinutes);
@@ -823,6 +905,7 @@ export default function AttendancePage() {
   // Filtered System Logs for Full-Width Bottom Table
   const filteredSystemLogs = useMemo(() => {
     const cleanUserEmail = (userEmail || "").toLowerCase().trim();
+    const cleanUserName = (userName || "").toLowerCase().trim();
     const isAdminUser = currentRole === "admin" || currentRole === "hr" || currentRole === "manager";
 
     let list = isAdminUser
@@ -832,7 +915,8 @@ export default function AttendancePage() {
       : allSystemLogs.filter(l => {
           if (!l) return false;
           const emailKey = (l.user_email || l.email || l.employee_id || l.user_id || "").toLowerCase().trim();
-          return emailKey === cleanUserEmail || (cleanUserEmail && emailKey.includes(cleanUserEmail.split("@")[0])) || isRecordFromToday(l);
+          const nameKey = (l.user_name || l.name || "").toLowerCase().trim();
+          return emailKey === cleanUserEmail || (cleanUserEmail && emailKey.includes(cleanUserEmail.split("@")[0])) || (cleanUserName && nameKey === cleanUserName);
         });
 
     if (statusFilter !== "all") {
@@ -922,6 +1006,20 @@ export default function AttendancePage() {
                 >
                   <FaUsers className="text-xs" /> Student & Employee History Inspector →
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowUserPdfModal(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+                >
+                  <FaUser className="text-xs" /> User-Wise PDF Export 👤
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+                >
+                  <FaFilePdf className="text-xs" /> Download All PDF
+                </button>
                 <button
                   type="button"
                   onClick={handleExportCsv}
@@ -1616,10 +1714,18 @@ export default function AttendancePage() {
           <div>
             <h3 className="font-bold text-[#0F172A] text-base flex items-center gap-2">
               <FaHistory className="text-[#2563EB]" />
-              <span>Master System Attendance Log</span>
+              <span>
+                {currentRole === "admin"
+                  ? "Organization Master System Attendance Log"
+                  : `My Attendance History Dossier (${userName || userEmail})`}
+              </span>
             </h3>
             <p className="text-xs text-[#64748B] flex items-center gap-2 flex-wrap mt-0.5">
-              <span>Full width attendance historical database.</span>
+              <span>
+                {currentRole === "admin"
+                  ? "Full database view of all employees, students, and interns."
+                  : "All your recorded check-in/out logs saved permanently in the cloud database."}
+              </span>
               {statusFilter !== "all" && (
                 <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#2563EB] bg-[#EFF6FF] px-2 py-0.5 rounded-md border border-[#2563EB]/20">
                   Filtered by: <strong className="capitalize">{statusFilter === "present" ? "Present & On Time" : statusFilter === "late" ? "Late Warning" : statusFilter === "leave" ? "On Leave" : statusFilter === "absent" ? "Absent Today (No Check-In)" : statusFilter}</strong>
@@ -1688,13 +1794,32 @@ export default function AttendancePage() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              className="bg-white hover:bg-[#F8FAFC] text-[#2563EB] border border-[#E2E8F0] font-semibold px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
-            >
-              <FaDownload className="text-xs" /> Export CSV
-            </button>
+            {currentRole !== "admin" ? (
+              <button
+                type="button"
+                onClick={() => handleExportSingleUserPdf({ user_name: userName, user_email: userEmail, user_role: userRole })}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+              >
+                <FaFilePdf className="text-xs" /> Download My Attendance PDF
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-semibold px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  <FaFilePdf className="text-xs text-emerald-600" /> Export PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  className="bg-white hover:bg-[#F8FAFC] text-[#2563EB] border border-[#E2E8F0] font-semibold px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  <FaDownload className="text-xs" /> Export CSV
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -1760,39 +1885,62 @@ export default function AttendancePage() {
 
                     {currentRole === "admin" && (
                       <td className="py-3.5 px-4 text-right">
-                        <div className="relative">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setActiveKebabId(activeKebabId === r.id ? null : r.id)}
-                            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+                            onClick={() => handleExportSingleUserPdf(r)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            title={`Download ${r.user_name || 'User'}'s Attendance PDF`}
                           >
-                            <FaEllipsisV className="text-xs" />
+                            <FaFilePdf className="text-[10px] text-emerald-600" />
+                            <span>PDF</span>
                           </button>
 
-                          {activeKebabId === r.id && (
-                            <div className={`absolute right-0 ${idx >= Math.max(1, filteredSystemLogs.length - 2) ? "bottom-full mb-1.5" : "top-full mt-1.5"} w-44 rounded-xl bg-white p-1.5 shadow-2xl border border-[#E2E8F0] z-50 space-y-0.5 text-xs text-left animate-in fade-in zoom-in-95 duration-100`}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setInspectModal(r);
-                                  setActiveKebabId(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-[#EFF6FF] text-[#0F172A] hover:text-[#2563EB] font-semibold transition-colors"
-                              >
-                                View Details
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDeleteModal({ isOpen: true, record: r, loading: false });
-                                  setActiveKebabId(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 font-semibold transition-colors"
-                              >
-                                Delete Record
-                              </button>
-                            </div>
-                          )}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setActiveKebabId(activeKebabId === r.id ? null : r.id)}
+                              className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+                            >
+                              <FaEllipsisV className="text-xs" />
+                            </button>
+
+                            {activeKebabId === r.id && (
+                              <div className={`absolute right-0 ${idx >= Math.max(1, filteredSystemLogs.length - 2) ? "bottom-full mb-1.5" : "top-full mt-1.5"} w-48 rounded-xl bg-white p-1.5 shadow-2xl border border-[#E2E8F0] z-50 space-y-0.5 text-xs text-left animate-in fade-in zoom-in-95 duration-100`}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleExportSingleUserPdf(r);
+                                    setActiveKebabId(null);
+                                  }}
+                                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-700 font-semibold transition-colors flex items-center gap-1.5"
+                                >
+                                  <FaFilePdf className="text-xs text-emerald-600" />
+                                  <span>Download User PDF</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInspectModal(r);
+                                    setActiveKebabId(null);
+                                  }}
+                                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-[#EFF6FF] text-[#0F172A] hover:text-[#2563EB] font-semibold transition-colors"
+                                >
+                                  View Details
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDeleteModal({ isOpen: true, record: r, loading: false });
+                                    setActiveKebabId(null);
+                                  }}
+                                  className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 font-semibold transition-colors"
+                                >
+                                  Delete Record
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     )}
@@ -2128,6 +2276,80 @@ export default function AttendancePage() {
                 className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 <span>Submit Request 📩</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* DEDICATED PER-USER PDF EXPORT MODAL */}
+      {showUserPdfModal && (
+        <Modal isOpen={showUserPdfModal} onClose={() => setShowUserPdfModal(false)} title="Download Individual User Attendance PDF 👤">
+          <div className="space-y-4 text-xs">
+            <p className="text-slate-600">
+              Select any candidate (Student, Employee, or Remote Intern) to download their personal attendance history PDF dossier.
+            </p>
+
+            <div className="relative">
+              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={userPdfSearch}
+                onChange={(e) => setUserPdfSearch(e.target.value)}
+                placeholder="Search candidate by name, email, or role..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-300 font-semibold text-slate-900 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1 divide-y divide-slate-100">
+              {uniqueUsersInLogs
+                .filter(u => {
+                  if (!userPdfSearch.trim()) return true;
+                  const q = userPdfSearch.toLowerCase();
+                  return (
+                    u.user_name.toLowerCase().includes(q) ||
+                    u.user_email.toLowerCase().includes(q) ||
+                    u.user_role.toLowerCase().includes(q)
+                  );
+                })
+                .map((u, i) => (
+                  <div key={`user-pdf-${i}`} className="pt-2 flex items-center justify-between gap-3 hover:bg-slate-50 p-2 rounded-xl transition-colors">
+                    <div>
+                      <div className="font-bold text-slate-900 flex items-center gap-2">
+                        <span>{u.user_name}</span>
+                        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 uppercase">
+                          {u.user_role}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">{u.user_email || 'No email logged'}</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">{u.recordsCount} Attendance Records in Database</div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleExportSingleUserPdf(u);
+                        setShowUserPdfModal(false);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0"
+                    >
+                      <FaFilePdf className="text-xs" />
+                      <span>Download PDF</span>
+                    </button>
+                  </div>
+                ))}
+              {uniqueUsersInLogs.length === 0 && (
+                <div className="text-center py-6 text-slate-400 italic">No user attendance logs found in database.</div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowUserPdfModal(false)}
+                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-semibold text-xs hover:bg-slate-100 cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

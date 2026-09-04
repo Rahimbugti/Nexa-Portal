@@ -22,8 +22,11 @@ import {
   FaTimesCircle,
   FaClock,
   FaCalendarCheck,
-  FaFilter
+  FaFilter,
+  FaFilePdf,
+  FaDownload
 } from "react-icons/fa";
+import { generatePrintableAttendanceListPdf, generatePrintableUserMonthlyAttendancePdf, generateSingleUserAttendancePdf } from "@/lib/generateAttendancePdf";
 
 // Helper for Today string
 function getTodayDateString() {
@@ -534,6 +537,83 @@ export default function AdminAttendanceHistoryHub() {
     ? Math.round(((presentDays.length + leaveDays.length) / workingDays.length) * 100)
     : 100;
 
+  const handleExportMasterPdf = () => {
+    try {
+      generatePrintableAttendanceListPdf({
+        title: "Master Attendance History Logs",
+        subtitle: `Date Filter: ${fromDate || 'Earliest'} to ${toDate || 'Latest'}`,
+        reportDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+        filterInfo: `Search: ${globalSearch || 'All Users'} | Filtered Count: ${filteredGlobalLogs.length}`,
+        records: filteredGlobalLogs,
+        generatedBy: "Admin Attendance Supervisor"
+      });
+      showToast("PDF Ready 📄", "Master attendance history opened for printing or PDF download.", "success");
+    } catch(e) {
+      showToast("PDF Error", "Failed to generate master attendance PDF.", "error");
+    }
+  };
+
+  const handleExportUserCalendarPdf = () => {
+    if (!selectedUser) return;
+    try {
+      const formattedDays = userCalendar.map(c => ({
+        date: c.attendance_date || c.date || "",
+        dayName: c.day_name || "",
+        status: c.attendance_status || (c.is_sunday ? "Sunday Holiday" : "Absent"),
+        checkIn: c.check_in_time || "—",
+        checkOut: c.check_out_time || "—",
+        hours: c.work_hours || c.total_work_hours || "",
+        notes: c.public_ip || c.notes || "",
+        isWeekend: Boolean(c.is_sunday)
+      }));
+
+      generatePrintableUserMonthlyAttendancePdf({
+        user: selectedUser,
+        month: `Official Attendance Statement (${getTodayDateString()})`,
+        calendarDays: formattedDays,
+        generatedBy: "Admin Attendance Desk"
+      });
+      showToast("PDF Ready 📄", `Attendance statement for ${selectedUser.name} opened.`, "success");
+    } catch(e) {
+      console.error(e);
+      showToast("PDF Error", "Failed to generate user attendance statement PDF.", "error");
+    }
+  };
+
+  const handleExportSingleUserPdfFromHistory = (item) => {
+    try {
+      const targetUserId = item.user_id || item.id;
+      const targetEmail = (item.user_email || item.email || "").toLowerCase().trim();
+      const targetName = (item.user_name || item.name || item.employee_name || "").toLowerCase().trim();
+
+      const userLogs = masterLogs.filter((l) => {
+        const lId = l.user_id || l.id;
+        const lEmail = (l.user_email || l.email || "").toLowerCase().trim();
+        const lName = (l.user_name || l.name || l.employee_name || "").toLowerCase().trim();
+
+        if (targetUserId && lId && lId === targetUserId) return true;
+        if (targetEmail && lEmail && lEmail === targetEmail) return true;
+        if (targetName && lName && lName === targetName) return true;
+        return false;
+      });
+
+      generateSingleUserAttendancePdf({
+        user: {
+          user_id: targetUserId,
+          user_name: item.user_name || item.employee_name || item.name || "Candidate",
+          user_email: item.user_email || item.email || "",
+          user_role: item.user_role || "Staff"
+        },
+        records: userLogs.length > 0 ? userLogs : [item],
+        generatedBy: "Admin Attendance Supervisor"
+      });
+      showToast("PDF Ready 📄", `Attendance list generated for ${item.user_name || item.employee_name || 'User'}.`, "success");
+    } catch (e) {
+      console.error(e);
+      showToast("PDF Error", "Failed to generate individual attendance PDF.", "error");
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="min-h-[350px] bg-white rounded-3xl border border-slate-200 p-8 flex flex-col items-center justify-center text-center space-y-4 shadow-xs">
@@ -726,16 +806,27 @@ export default function AdminAttendanceHistoryHub() {
                       <p className="text-[11px] text-blue-200 uppercase font-semibold">Working Days Attendance</p>
                       <p className="text-3xl font-extrabold text-emerald-400 mt-0.5">{attendanceRate}%</p>
                     </div>
-                    {isAdmin && (
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handlePermanentDeleteCandidate(selectedUser)}
-                        className="px-3 py-1.5 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-rose-400/30"
+                        onClick={handleExportUserCalendarPdf}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-emerald-400/30"
+                        title="Download Statement PDF"
                       >
-                        <FaTrashAlt className="text-[10px]" />
-                        <span>Purge Candidate 🗑️</span>
+                        <FaFilePdf className="text-[10px]" />
+                        <span>Download PDF 📄</span>
                       </button>
-                    )}
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handlePermanentDeleteCandidate(selectedUser)}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-rose-400/30"
+                        >
+                          <FaTrashAlt className="text-[10px]" />
+                          <span>Purge 🗑️</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -766,9 +857,18 @@ export default function AdminAttendanceHistoryHub() {
                       <FaCalendarCheck className="text-blue-600" />
                       <span>{selectedUser.name}&apos;s Attendance Calendar History</span>
                     </h3>
-                    <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
-                      {userCalendar.length} Calendar Days Logged
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExportUserCalendarPdf}
+                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-1 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <FaFilePdf className="text-xs text-emerald-600" /> Download PDF Statement
+                      </button>
+                      <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
+                        {userCalendar.length} Days
+                      </span>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -908,6 +1008,14 @@ export default function AdminAttendanceHistoryHub() {
                 <span>Reset</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleExportMasterPdf}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs whitespace-nowrap ml-auto"
+            >
+              <FaFilePdf className="text-xs" /> Download Master PDF
+            </button>
           </div>
 
           {/* Master Table */}
@@ -922,12 +1030,13 @@ export default function AdminAttendanceHistoryHub() {
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4">Check In</th>
                     <th className="py-3 px-4">Check Out</th>
+                    <th className="py-3 px-4 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredGlobalLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-400 italic">
+                      <td colSpan={7} className="py-12 text-center text-slate-400 italic">
                         No raw attendance logs match the current filters.
                       </td>
                     </tr>
@@ -955,6 +1064,17 @@ export default function AdminAttendanceHistoryHub() {
                           </td>
                           <td className="py-3 px-4 font-mono text-emerald-700 font-semibold">{clockIn}</td>
                           <td className="py-3 px-4 font-mono text-rose-700 font-semibold">{clockOut}</td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleExportSingleUserPdfFromHistory(item)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                              title={`Download ${userName}'s Attendance PDF`}
+                            >
+                              <FaFilePdf className="text-[10px] text-emerald-600" />
+                              <span>PDF</span>
+                            </button>
+                          </td>
                         </tr>
                       );
                     })
