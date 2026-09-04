@@ -392,14 +392,17 @@ export default function DashboardPage() {
 
       const combinedMap = new Map();
 
+      // 1. Process Employees
       persistentEmps.forEach(e => {
         if (!e || !e.email) return;
-        const attInfo = getTodayAttendanceDetails(e.email, e);
-        combinedMap.set(e.email.toLowerCase(), {
+        const eEmail = (e.email || "").toLowerCase().trim();
+        const attInfo = getTodayAttendanceDetails(eEmail, e);
+        const isRemote = (e.employment_type || "").toLowerCase().includes("remote") || e.is_remote === true;
+        combinedMap.set(eEmail, {
           id: e.id || `emp-${Date.now()}`,
-          fullName: e.full_name || e.name || "Unknown Employee",
-          email: e.email,
-          category: e.employment_type || "On-Site Staff",
+          fullName: e.full_name || e.name || "Staff Member",
+          email: eEmail,
+          category: isRemote ? "Remote Staff" : (e.employment_type || "On-Site Staff"),
           role: "employee",
           department: `${e.department || 'General'} (${e.designation || 'Staff'})`,
           checkIn: attInfo.checkIn,
@@ -411,16 +414,26 @@ export default function DashboardPage() {
         });
       });
 
+      // 2. Process Course Students (including Remote Students)
       persistentStudents.forEach(s => {
         if (!s || !s.email) return;
-        const attInfo = getTodayAttendanceDetails(s.email, s);
-        combinedMap.set(s.email.toLowerCase(), {
+        const sEmail = (s.email || "").toLowerCase().trim();
+        const attInfo = getTodayAttendanceDetails(sEmail, s);
+        const isRemote = (s.track_type || "").toLowerCase().includes("remote") || 
+          s.is_remote === true || 
+          s.isRemote === true || 
+          (s.batch || "").toLowerCase().includes("remote") || 
+          (s.course_name || "").toLowerCase().includes("remote");
+
+        const category = s.track_type || (isRemote ? "Remote Course Student" : "Course Enrolled Student");
+
+        combinedMap.set(sEmail, {
           id: s.id || `stu-${Date.now()}`,
-          fullName: s.full_name || s.name || "Unknown Student",
-          email: s.email,
-          category: "Course Enrolled Student",
+          fullName: s.full_name || s.name || s.student_name || "Enrolled Student",
+          email: sEmail,
+          category: category,
           role: "student",
-          department: s.course_name || "MERN Stack Course",
+          department: s.course_name || s.tech_domain || "MERN Stack Course",
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
@@ -430,22 +443,70 @@ export default function DashboardPage() {
         });
       });
 
+      // 3. Process Interns (including Remote Interns)
       persistentInterns.forEach(i => {
         if (!i || !i.email) return;
-        const attInfo = getTodayAttendanceDetails(i.email, i);
-        combinedMap.set(i.email.toLowerCase(), {
+        const iEmail = (i.email || "").toLowerCase().trim();
+        const attInfo = getTodayAttendanceDetails(iEmail, i);
+        const isRemote = (i.internship_mode || "").toLowerCase().includes("remote") || 
+          i.is_remote === true || 
+          (i.track_type || "").toLowerCase().includes("remote") || 
+          (i.role || "").toLowerCase().includes("remote");
+
+        const category = isRemote ? "Remote 3-Month Intern" : "On-Site 3-Month Intern";
+
+        combinedMap.set(iEmail, {
           id: i.id || `int-${Date.now()}`,
-          fullName: i.full_name || i.name || "Unknown Intern",
-          email: i.email,
-          category: i.internship_mode?.includes("Remote") ? "Remote 3-Month Intern" : "On-Site 3-Month Intern",
+          fullName: i.full_name || i.name || "Enrolled Intern",
+          email: iEmail,
+          category: category,
           role: "intern",
-          department: i.course_name || i.domain || "Software Engineering Intern",
+          department: i.course_name || i.tech_domain || i.domain || "Software Engineering Intern",
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
           progress: `${i.progress !== undefined ? i.progress : 0}% Internship Milestone Completed`,
           dailyTask: i.task_logs?.[0]?.details || "Working on assigned project module.",
           feeStatus: "Free Internship",
+        });
+      });
+
+      // 4. Include Any Additional Registered System Users from Local Storage / Signup
+      let registeredUsers = [];
+      try {
+        if (typeof window !== "undefined") {
+          const rawU = localStorage.getItem("registered_system_users");
+          if (rawU) registeredUsers = JSON.parse(rawU) || [];
+        }
+      } catch (e) {}
+
+      registeredUsers.forEach(u => {
+        if (!u || !u.email) return;
+        const uEmail = (u.email || "").toLowerCase().trim();
+        if (combinedMap.has(uEmail)) return; // already added from students/interns/employees
+
+        const attInfo = getTodayAttendanceDetails(uEmail, u);
+        const uRole = (u.role || "student").toLowerCase();
+        const isRemote = (u.track_type || u.internship_mode || "").toLowerCase().includes("remote") || u.is_remote === true || uRole.includes("remote");
+
+        let cat = "Registered Member";
+        if (uRole.includes("student")) cat = isRemote ? "Remote Course Student" : "Course Enrolled Student";
+        else if (uRole.includes("intern")) cat = isRemote ? "Remote 3-Month Intern" : "On-Site 3-Month Intern";
+        else if (uRole.includes("employee")) cat = isRemote ? "Remote Staff" : "On-Site Staff";
+
+        combinedMap.set(uEmail, {
+          id: u.id || `user-${Date.now()}`,
+          fullName: u.fullName || u.full_name || u.name || uEmail.split("@")[0],
+          email: uEmail,
+          category: cat,
+          role: uRole.includes("student") ? "student" : (uRole.includes("intern") ? "intern" : "employee"),
+          department: u.course_name || u.department || "Software House Member",
+          checkIn: attInfo.checkIn,
+          checkOut: attInfo.checkOut,
+          attendance: attInfo.status,
+          progress: "Active Member",
+          dailyTask: "Logged in to Nexa Portal workspace.",
+          feeStatus: uRole.includes("student") ? "Paid" : "N/A",
         });
       });
 
