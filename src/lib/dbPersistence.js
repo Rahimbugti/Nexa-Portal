@@ -29,6 +29,7 @@ export const TABLE_STORAGE_KEYS = {
   productivity_reports: "remote_productivity_reports",
   student_fee_cycles: "persistent_student_fee_cycles",
   registered_accounts: "registered_system_users",
+  app_users: "registered_system_users",
   student_attendance: "student_attendance_records",
 };
 

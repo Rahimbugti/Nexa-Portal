@@ -241,10 +241,11 @@ export default function DashboardPage() {
 
   const loadAllMembers = useCallback(async () => {
     try {
-      const [cloudEmps, cloudStudents, cloudInterns, cloudAtt, cloudLeaves] = await Promise.all([
+      const [cloudEmps, cloudStudents, cloudInterns, cloudAppUsers, cloudAtt, cloudLeaves] = await Promise.all([
         dbFetch("employees", [], true).catch(() => []),
         dbFetch("students", [], true).catch(() => []),
         dbFetch("interns", [], true).catch(() => []),
+        dbFetch("app_users", [], true).catch(() => []),
         dbFetch("attendance", [], true).catch(() => []),
         dbFetch("leaves", [], true).catch(() => [])
       ]);
@@ -253,11 +254,13 @@ export default function DashboardPage() {
         if (Array.isArray(cloudEmps)) localStorage.setItem("persistent_employees", JSON.stringify(cloudEmps));
         if (Array.isArray(cloudStudents)) localStorage.setItem("persistent_courses", JSON.stringify(cloudStudents));
         if (Array.isArray(cloudInterns)) localStorage.setItem("persistent_interns", JSON.stringify(cloudInterns));
+        if (Array.isArray(cloudAppUsers)) localStorage.setItem("registered_system_users", JSON.stringify(cloudAppUsers));
       }
 
       const persistentEmps = cloudEmps || [];
       const persistentStudents = cloudStudents || [];
       const persistentInterns = cloudInterns || [];
+      const persistentAppUsers = cloudAppUsers || [];
       const dbAttendance = cloudAtt || [];
       const dbLeaves = cloudLeaves || [];
 
@@ -471,18 +474,26 @@ export default function DashboardPage() {
         });
       });
 
-      // 4. Include Any Additional Registered System Users from Local Storage / Signup
-      let registeredUsers = [];
+      // 4. Include Any Additional Registered System Users from Cloud Database & Local Storage
+      let localRegUsers = [];
       try {
         if (typeof window !== "undefined") {
           const rawU = localStorage.getItem("registered_system_users");
-          if (rawU) registeredUsers = JSON.parse(rawU) || [];
+          if (rawU) localRegUsers = JSON.parse(rawU) || [];
         }
       } catch (e) {}
 
-      registeredUsers.forEach(u => {
-        if (!u || !u.email) return;
-        const uEmail = (u.email || "").toLowerCase().trim();
+      const allCombinedUsers = [...persistentAppUsers, ...localRegUsers];
+      const userMap = new Map();
+      allCombinedUsers.forEach(u => {
+        if (u && u.email) {
+          const e = String(u.email).toLowerCase().trim();
+          if (!userMap.has(e)) userMap.set(e, u);
+        }
+      });
+
+      userMap.forEach((u, uEmail) => {
+        if (!u || !uEmail) return;
         if (combinedMap.has(uEmail)) return; // already added from students/interns/employees
 
         const attInfo = getTodayAttendanceDetails(uEmail, u);
@@ -510,7 +521,18 @@ export default function DashboardPage() {
         });
       });
 
-      setAllRegisteredUsersList(Array.from(combinedMap.values()));
+      // Filter out any blacklisted/deleted entities
+      const blacklist = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]") : [];
+      const finalFilteredMembers = Array.from(combinedMap.values()).filter(m => {
+        if (!m) return false;
+        const e = (m.email || "").toLowerCase().trim();
+        const idStr = String(m.id || "").toLowerCase().trim();
+        if (e && blacklist.includes(e)) return false;
+        if (idStr && blacklist.includes(idStr)) return false;
+        return true;
+      });
+
+      setAllRegisteredUsersList(finalFilteredMembers);
     } catch (e) { }
   }, []);
 
@@ -674,13 +696,49 @@ export default function DashboardPage() {
         }
       }
 
-      // Cascade delete across all tables in DB via dbDeleteRecord
+      // 3. Direct Client-Side Supabase Deletes (Fail-Safe)
+      if (email) {
+        await Promise.allSettled([
+          supabase.from("students").delete().eq("email", email),
+          supabase.from("students").delete().ilike("email", email),
+          supabase.from("interns").delete().eq("email", email),
+          supabase.from("interns").delete().ilike("email", email),
+          supabase.from("employees").delete().eq("email", email),
+          supabase.from("employees").delete().ilike("email", email),
+          supabase.from("app_users").delete().eq("email", email),
+          supabase.from("app_users").delete().ilike("email", email),
+          supabase.from("attendance").delete().eq("user_email", email),
+          supabase.from("attendance").delete().eq("email", email),
+          supabase.from("attendance").delete().eq("student_id", email),
+          supabase.from("attendance").delete().eq("employee_id", email),
+          supabase.from("leaves").delete().eq("applicant_email", email),
+          supabase.from("leaves").delete().eq("email", email),
+          supabase.from("daily_tasks").delete().eq("assigned_to_email", email),
+          supabase.from("daily_tasks").delete().eq("email", email),
+          supabase.from("payrolls").delete().eq("email", email),
+          supabase.from("performances").delete().eq("email", email),
+          supabase.from("screenshot_logs").delete().eq("email", email),
+          supabase.from("activity_logs").delete().eq("email", email),
+          supabase.from("monitoring_sessions").delete().eq("user_email", email)
+        ]);
+      }
+
+      if (id && String(id).length > 5) {
+        await Promise.allSettled([
+          supabase.from("students").delete().eq("id", id),
+          supabase.from("interns").delete().eq("id", id),
+          supabase.from("employees").delete().eq("id", id),
+          supabase.from("app_users").delete().eq("id", id)
+        ]);
+      }
+
+      // 4. Cascade delete across all tables in DB via dbDeleteRecord
       const tablesToDelete = ["students", "interns", "employees", "app_users"];
       for (const t of tablesToDelete) {
         await dbDeleteRecord(t, id, email).catch(() => {});
       }
 
-      // Direct API call to guarantee backend purge across Supabase tables
+      // 5. Direct API call to guarantee backend purge across Supabase tables
       if (typeof fetch !== "undefined") {
         await fetch("/api/persistence", {
           method: "POST",
