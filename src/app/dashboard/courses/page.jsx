@@ -461,6 +461,8 @@ export default function CoursesPage() {
         assigned_password: "",
         confirm_password: "",
         phone: "",
+        track_type: "Remote Student",
+        tech_domain: "Full Stack MERN Web Development",
         batch: "Batch #14 (Morning Tech)",
         guardian_name: "",
         guardian_phone: "",

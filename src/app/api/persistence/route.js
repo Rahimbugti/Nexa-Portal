@@ -708,17 +708,30 @@ export async function POST(request) {
 
       // 2.9 Students Table Explicit Handler
       if (table === "students") {
+        const cleanEmail = (record.email || "").toLowerCase().trim();
+        const cleanName = record.full_name || record.name || record.student_name || (cleanEmail ? cleanEmail.split("@")[0] : "Student Member");
+        const startDate = record.start_date || record.enrollment_date || record.admission_date || new Date().toISOString().split("T")[0];
+
         const payload = {
-          enrollment_no: record.enrollment_no || `STD-${Math.random().toString(36).substring(2, 8)}`,
-          full_name: record.full_name || record.name || "Student Member",
-          email: (record.email || "").toLowerCase().trim(),
+          enrollment_no: record.enrollment_no || record.student_id || `STD-${Math.random().toString(36).substring(2, 8)}`,
+          full_name: cleanName,
+          email: cleanEmail,
           phone: record.phone || null,
-          course_name: record.course_name || record.tech_domain || "Full Stack MERN Web Development",
-          start_date: record.start_date || new Date().toISOString().split("T")[0],
+          course_name: record.course_name || record.tech_domain || record.course || "Full Stack MERN Web Development",
+          admission_date: startDate,
+          start_date: startDate,
           status: record.status || "active",
           fee_status: record.fee_status || "Paid",
           progress: Number(record.progress) || 0
         };
+
+        if (cleanEmail) {
+          const { data: existS } = await supabase.from("students").select("id").eq("email", cleanEmail).limit(1);
+          if (existS && existS.length > 0) {
+            const { data: updData } = await supabase.from("students").update(payload).eq("id", existS[0].id).select();
+            return NextResponse.json({ success: true, updated: true, data: updData });
+          }
+        }
 
         const { data: insertedData, error: stuErr } = await supabase.from("students").insert([payload]).select();
         return NextResponse.json({ success: !stuErr, data: insertedData, error: stuErr ? stuErr.message : null });

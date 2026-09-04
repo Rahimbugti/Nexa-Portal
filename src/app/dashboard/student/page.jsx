@@ -766,7 +766,15 @@ export default function StudentDedicatedDashboardPage() {
         }
 
         const courseTitle = matched.course_name || matched.course || matched.tech_domain || "Full Stack MERN Web Development";
-        const isRemote = matched.is_remote || (matched.internship_mode || "").includes("Remote") || (matched.course_name || "").includes("Remote") || (matched.batch || "").includes("Remote");
+        const isRemote = matched.is_remote === true || 
+          matched.is_remote === "true" || 
+          matched.track_type === "Remote Student" || 
+          matched.track_type === "remote" || 
+          matched.trackType === "Remote Student" || 
+          (matched.track_type || "").toLowerCase().includes("remote") || 
+          (matched.internship_mode || "").toLowerCase().includes("remote") || 
+          (matched.course_name || "").toLowerCase().includes("remote") || 
+          (matched.batch || "").toLowerCase().includes("remote");
         const trackType = isInternRole 
           ? (isRemote ? "Remote Internship" : "On-Site Internship")
           : (isRemote ? "Remote Student" : "On-Site Student");

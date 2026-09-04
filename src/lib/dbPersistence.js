@@ -196,15 +196,40 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
     }
   } catch (e) {}
 
-  // 3. Database is Single Source of Truth
+  // 3. Database & Local Storage Safe Merge (Preserves newly enrolled students on refresh)
   let merged = [];
-  if (fetchedFromDb) {
-    // DB is live: Use DB data directly as primary truth, filtered against blacklist
-    merged = dbData.filter(i => !isDeleted(i));
+  if (fetchedFromDb && Array.isArray(dbData)) {
+    const map = new Map();
+
+    // 1. Load local records into map first
+    (localData || []).forEach((item) => {
+      if (!item || isDeleted(item)) return;
+      const key = getDedupeKey(item);
+      if (key) map.set(key, item);
+    });
+
+    // 2. Overlay / Merge DB data while preserving local fields (e.g. track_type, is_remote)
+    (dbData || []).forEach((item) => {
+      if (!item || isDeleted(item)) return;
+      const key = getDedupeKey(item);
+      if (key) {
+        const existing = map.get(key) || {};
+        map.set(key, { ...existing, ...item });
+      } else {
+        const fallbackKey = String(item.id || item.email || item.name || Math.random()).toLowerCase().trim();
+        map.set(fallbackKey, item);
+      }
+    });
+
+    merged = Array.from(map.values());
+
     if (typeof window !== "undefined") {
       try {
         localStorage.setItem(storageKey, JSON.stringify(merged));
-        // Clear old aliases
+        if (table === "students") {
+          localStorage.setItem("persistent_courses", JSON.stringify(merged));
+          localStorage.setItem("software_house_students", JSON.stringify(merged));
+        }
         if (table === "projects") {
           localStorage.setItem("software_house_projects", JSON.stringify(merged));
           localStorage.setItem("software_house_full_projects", JSON.stringify(merged));

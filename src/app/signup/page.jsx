@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { showToast } from "@/components/Toast";
 import { supabase } from "@/lib/supabase";
 import { saveRegisteredAuthAccount } from "@/lib/studentEnrollmentUtils";
+import { dbSaveRecord } from "@/lib/dbPersistence";
 import { FaLock, FaEnvelope, FaUser, FaBuilding, FaArrowRight, FaShieldAlt, FaEye, FaEyeSlash } from "react-icons/fa";
 
 export default function SignupPage() {
@@ -33,24 +34,76 @@ export default function SignupPage() {
 
     try {
       const cleanEmail = email.trim().toLowerCase();
+      const cleanName = fullName.trim();
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
-          data: { full_name: fullName.trim(), role },
+          data: { full_name: cleanName, role },
         },
       });
 
       if (error) throw error;
 
+      const authId = data?.user?.id || `usr_${Date.now()}`;
+
       // Save credentials to cloud database store so all devices can log in
       await saveRegisteredAuthAccount({
-        authUserId: data?.user?.id || `usr_${Date.now()}`,
+        authUserId: authId,
         email: cleanEmail,
         password: password,
         role: role,
-        fullName: fullName.trim(),
+        fullName: cleanName,
       }).catch(() => {});
+
+      // Auto-create Student Profile Record
+      if (role === "student" || role === "course_student") {
+        const studentProfile = {
+          id: `std_${Date.now()}`,
+          student_id: `STD-${Date.now().toString().slice(-6)}`,
+          auth_user_id: authId,
+          full_name: cleanName,
+          student_name: cleanName,
+          email: cleanEmail,
+          course_name: "Full Stack MERN Web Development",
+          course: "Full Stack MERN Web Development",
+          batch: "Batch #14 (Remote Online)",
+          track_type: "Remote Student",
+          is_remote: true,
+          status: "active",
+          role: "student",
+          enrollment_date: new Date().toISOString().split("T")[0],
+          admission_date: new Date().toISOString().split("T")[0],
+          start_date: new Date().toISOString().split("T")[0],
+          total_fee: 25000,
+          submitted_fee: 25000,
+          fee_status: "Paid",
+          progress: 0,
+          created_at: new Date().toISOString()
+        };
+        await dbSaveRecord("students", studentProfile).catch(() => {});
+        fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: "students", record: studentProfile, action: "save" })
+        }).catch(() => {});
+      } else if (role === "intern") {
+        const internProfile = {
+          id: `intern_${Date.now()}`,
+          full_name: cleanName,
+          name: cleanName,
+          email: cleanEmail,
+          internship_mode: "Remote / Online",
+          course_name: "Full Stack MERN Web Development",
+          tech_domain: "Full Stack MERN Web Development",
+          start_date: new Date().toISOString().split("T")[0],
+          status: "active",
+          role: "Remote Intern",
+          progress: 0,
+          created_at: new Date().toISOString()
+        };
+        await dbSaveRecord("interns", internProfile).catch(() => {});
+      }
 
       if (data.session) {
         localStorage.setItem("isLoggedIn", "true");

@@ -202,7 +202,13 @@ export async function enrollStudentWithCredentials({
     .toISOString()
     .split("T")[0];
 
-  // Build Student Profile Record (No plain-text password)
+  const isRemoteTrack = 
+    (studentData.track_type || "").toLowerCase().includes("remote") ||
+    studentData.is_remote === true ||
+    studentData.isRemote === true ||
+    (studentData.batch || "").toLowerCase().includes("remote");
+
+  // Build Student Profile Record (Preserves Remote Student flags & Course Details)
   const studentProfile = {
     id: studentId,
     student_id: studentId,
@@ -212,17 +218,26 @@ export async function enrollStudentWithCredentials({
     email: cleanEmail,
     phone: studentData.phone || "",
     emergency_contact: studentData.emergency_phone || studentData.emergency_contact || "",
+    guardian_name: studentData.guardian_name || "",
     guardian_phone: studentData.guardian_phone || "",
     cnic: studentData.cnic || "",
-    course_name: studentData.course_name || "Full Stack MERN Web Development",
-    course: studentData.course_name || "Full Stack MERN Web Development",
-    batch: studentData.batch || "Batch #14 (Morning)",
+    track_type: studentData.track_type || (isRemoteTrack ? "Remote Student" : "On-Site Student"),
+    trackType: studentData.track_type || (isRemoteTrack ? "Remote Student" : "On-Site Student"),
+    is_remote: isRemoteTrack,
+    isRemote: isRemoteTrack,
+    course_name: studentData.course_name || studentData.tech_domain || "Full Stack MERN Web Development",
+    course: studentData.course_name || studentData.tech_domain || "Full Stack MERN Web Development",
+    tech_domain: studentData.tech_domain || studentData.course_name || "Full Stack MERN Web Development",
+    instructor: studentData.instructor || "Lead Full-Stack Instructor",
+    resources_url: studentData.resources_url || "https://github.com/softwarehouse/mern-course-materials",
+    batch: studentData.batch || (isRemoteTrack ? "Batch #14 (Remote Online)" : "Batch #14 (Morning Tech)"),
     total_fee: totalFee,
     course_fee: totalFee,
     submitted_fee: submittedFee,
     fee_paid: submittedFee,
     remaining_fee: remainingFee,
     enrollment_date: enrollmentDate,
+    admission_date: enrollmentDate,
     start_date: enrollmentDate,
     completion_date: completionDate,
     end_date: completionDate,
@@ -244,6 +259,20 @@ export async function enrollStudentWithCredentials({
 
   // Save to persistence storage
   await dbSaveRecord("students", studentProfile).catch(() => {});
+
+  // Update local storage arrays immediately
+  if (typeof window !== "undefined") {
+    try {
+      ["persistent_courses", "software_house_students"].forEach((key) => {
+        const raw = localStorage.getItem(key);
+        const existing = raw ? JSON.parse(raw) : [];
+        const filtered = existing.filter(
+          (s) => s && s.id !== studentId && (s.email || "").toLowerCase().trim() !== cleanEmail
+        );
+        localStorage.setItem(key, JSON.stringify([studentProfile, ...filtered]));
+      });
+    } catch (e) {}
+  }
 
   // Save auth credentials to cloud database so all devices can log in
   await saveRegisteredAuthAccount({
