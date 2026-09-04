@@ -529,109 +529,6 @@ export default function DashboardPage() {
     return () => window.removeEventListener("dataChanged", handleUpdate);
   }, [loadDashboardData, loadAllMembers]);
 
-  const executeConfirmedDelete = async () => {
-    if (!confirmDeleteModal.targetMember && !confirmDeleteModal.targetId) {
-      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
-      return;
-    }
-
-    const m = confirmDeleteModal.targetMember || {};
-    const id = confirmDeleteModal.targetId || m.id;
-    const email = (m.email || confirmDeleteModal.targetEmail || "").toLowerCase().trim();
-    const name = m.fullName || confirmDeleteModal.title || "Member";
-    const role = (m.role || confirmDeleteModal.type || "student").toLowerCase();
-
-    setConfirmDeleteModal(prev => ({ ...prev, loading: true }));
-
-    try {
-      // 1. Optimistic UI update
-      setAllRegisteredUsersList(prev => prev.filter(item => {
-        const iEmail = (item.email || "").toLowerCase().trim();
-        const iId = String(item.id || "").toLowerCase().trim();
-        if (email && iEmail === email) return false;
-        if (id && iId === String(id).toLowerCase().trim()) return false;
-        return true;
-      }));
-
-      // 2. Add to localStorage blacklist & purge from all local collections
-      if (typeof window !== "undefined") {
-        const blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
-        if (email && !blacklist.includes(email)) blacklist.push(email);
-        if (id && !blacklist.includes(String(id).toLowerCase())) blacklist.push(String(id).toLowerCase());
-        localStorage.setItem("deleted_entity_blacklist", JSON.stringify(blacklist));
-
-        const keysToPurge = [
-          "persistent_courses",
-          "persistent_interns",
-          "persistent_employees",
-          "registered_system_users",
-          "software_house_students",
-          "software_house_interns",
-          "software_house_employees"
-        ];
-
-        keysToPurge.forEach(k => {
-          try {
-            const raw = localStorage.getItem(k);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed)) {
-                const filtered = parsed.filter(item => {
-                  if (!item) return false;
-                  const itemEmail = (item.email || "").toLowerCase().trim();
-                  const itemId = String(item.id || "").toLowerCase().trim();
-                  if (email && itemEmail === email) return false;
-                  if (id && itemId === String(id).toLowerCase().trim()) return false;
-                  return true;
-                });
-                localStorage.setItem(k, JSON.stringify(filtered));
-              }
-            }
-          } catch(e) {}
-        });
-
-        // Remove individual attendance caches
-        if (email) {
-          localStorage.removeItem(`today_attendance_${email}`);
-          localStorage.removeItem(`student_attendance_${email}`);
-          localStorage.removeItem(`employee_attendance_${email}`);
-        }
-      }
-
-      // 3. Cascade delete across all tables in DB via dbDeleteRecord
-      const tablesToDelete = ["students", "interns", "employees", "app_users"];
-      for (const t of tablesToDelete) {
-        await dbDeleteRecord(t, id, email).catch(() => {});
-      }
-
-      // 4. Direct API call to guarantee backend purge across Supabase tables
-      if (typeof fetch !== "undefined") {
-        await fetch("/api/persistence", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            table: role.includes("intern") ? "interns" : role.includes("student") ? "students" : "employees",
-            action: "delete",
-            record: { id, email, full_name: name },
-          }),
-        }).catch(() => {});
-      }
-
-      showToast("Record Deleted 🗑️", `"${name}" has been permanently deleted from database.`, "info");
-      
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("dataChanged"));
-      }
-      loadDashboardData();
-      loadAllMembers();
-    } catch (err) {
-      console.error("Delete failed:", err);
-      showToast("Error", "Could not complete deletion.", "error");
-    } finally {
-      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
-    }
-  };
-
   // Filtered & Sorted Members List
   const filteredMembersList = useMemo(() => {
     let list = [...allRegisteredUsersList];
@@ -675,6 +572,7 @@ export default function DashboardPage() {
   const executeConfirmedDelete = async () => {
     setConfirmDeleteModal(prev => ({ ...prev, loading: true }));
 
+    // 1. Clear All Tasks
     if (confirmDeleteModal.type === "clear_all_tasks") {
       setProjectsProgressList([]);
       try {
@@ -682,7 +580,15 @@ export default function DashboardPage() {
         localStorage.setItem("software_house_assigned_tasks", JSON.stringify([]));
       } catch (e) { }
       showToast("All Tasks Cleared 🗑️", "All active project tasks wiped clean.", "info");
-    } else if (confirmDeleteModal.type === "single_task") {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dataChanged"));
+      }
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+      return;
+    }
+
+    // 2. Single Project/Daily Task Delete
+    if (confirmDeleteModal.type === "single_task") {
       const targetId = confirmDeleteModal.targetId;
       const updated = projectsProgressList.filter(p => String(p.id) !== String(targetId));
       setProjectsProgressList(updated);
@@ -695,12 +601,111 @@ export default function DashboardPage() {
         }
       } catch (e) { }
       showToast("Task Deleted 🗑️", "Task removed permanently.", "info");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dataChanged"));
+      }
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+      return;
     }
 
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event("dataChanged"));
+    // 3. Member Delete (Students, Interns, Employees, Registered Users)
+    if (!confirmDeleteModal.targetMember && !confirmDeleteModal.targetId) {
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+      return;
     }
-    setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", title: "", loading: false });
+
+    const m = confirmDeleteModal.targetMember || {};
+    const id = confirmDeleteModal.targetId || m.id;
+    const email = (m.email || confirmDeleteModal.targetEmail || "").toLowerCase().trim();
+    const name = m.fullName || confirmDeleteModal.title || "Member";
+    const role = (m.role || confirmDeleteModal.type || "student").toLowerCase();
+
+    try {
+      // Optimistic UI update
+      setAllRegisteredUsersList(prev => prev.filter(item => {
+        const iEmail = (item.email || "").toLowerCase().trim();
+        const iId = String(item.id || "").toLowerCase().trim();
+        if (email && iEmail === email) return false;
+        if (id && iId === String(id).toLowerCase().trim()) return false;
+        return true;
+      }));
+
+      // Add to localStorage blacklist & purge from all local collections
+      if (typeof window !== "undefined") {
+        const blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+        if (email && !blacklist.includes(email)) blacklist.push(email);
+        if (id && !blacklist.includes(String(id).toLowerCase())) blacklist.push(String(id).toLowerCase());
+        localStorage.setItem("deleted_entity_blacklist", JSON.stringify(blacklist));
+
+        const keysToPurge = [
+          "persistent_courses",
+          "persistent_interns",
+          "persistent_employees",
+          "registered_system_users",
+          "software_house_students",
+          "software_house_interns",
+          "software_house_employees"
+        ];
+
+        keysToPurge.forEach(k => {
+          try {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter(item => {
+                  if (!item) return false;
+                  const itemEmail = (item.email || "").toLowerCase().trim();
+                  const itemId = String(item.id || "").toLowerCase().trim();
+                  if (email && itemEmail === email) return false;
+                  if (id && itemId === String(id).toLowerCase().trim()) return false;
+                  return true;
+                });
+                localStorage.setItem(k, JSON.stringify(filtered));
+              }
+            }
+          } catch(e) {}
+        });
+
+        if (email) {
+          localStorage.removeItem(`today_attendance_${email}`);
+          localStorage.removeItem(`student_attendance_${email}`);
+          localStorage.removeItem(`employee_attendance_${email}`);
+        }
+      }
+
+      // Cascade delete across all tables in DB via dbDeleteRecord
+      const tablesToDelete = ["students", "interns", "employees", "app_users"];
+      for (const t of tablesToDelete) {
+        await dbDeleteRecord(t, id, email).catch(() => {});
+      }
+
+      // Direct API call to guarantee backend purge across Supabase tables
+      if (typeof fetch !== "undefined") {
+        await fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: role.includes("intern") ? "interns" : role.includes("student") ? "students" : "employees",
+            action: "delete",
+            record: { id, email, full_name: name },
+          }),
+        }).catch(() => {});
+      }
+
+      showToast("Record Deleted 🗑️", `"${name}" has been permanently deleted from database.`, "info");
+      
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dataChanged"));
+      }
+      loadDashboardData();
+      loadAllMembers();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      showToast("Error", "Could not complete deletion.", "error");
+    } finally {
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+    }
   };
 
   const getInitials = (name) => {
