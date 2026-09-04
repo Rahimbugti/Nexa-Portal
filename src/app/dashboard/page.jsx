@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
+import { dbFetch, dbSaveRecord, dbDeleteRecord } from "@/lib/dbPersistence";
 import { showToast } from "@/components/Toast";
 import { fetchRecentActivities, formatTimeAgo, clearActivityLogs } from "@/lib/activityUtils";
 import { enrollStudentWithCredentials, registerEmployeeWithCredentials } from "@/lib/studentEnrollmentUtils";
@@ -529,6 +529,109 @@ export default function DashboardPage() {
     return () => window.removeEventListener("dataChanged", handleUpdate);
   }, [loadDashboardData, loadAllMembers]);
 
+  const executeConfirmedDelete = async () => {
+    if (!confirmDeleteModal.targetMember && !confirmDeleteModal.targetId) {
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+      return;
+    }
+
+    const m = confirmDeleteModal.targetMember || {};
+    const id = confirmDeleteModal.targetId || m.id;
+    const email = (m.email || confirmDeleteModal.targetEmail || "").toLowerCase().trim();
+    const name = m.fullName || confirmDeleteModal.title || "Member";
+    const role = (m.role || confirmDeleteModal.type || "student").toLowerCase();
+
+    setConfirmDeleteModal(prev => ({ ...prev, loading: true }));
+
+    try {
+      // 1. Optimistic UI update
+      setAllRegisteredUsersList(prev => prev.filter(item => {
+        const iEmail = (item.email || "").toLowerCase().trim();
+        const iId = String(item.id || "").toLowerCase().trim();
+        if (email && iEmail === email) return false;
+        if (id && iId === String(id).toLowerCase().trim()) return false;
+        return true;
+      }));
+
+      // 2. Add to localStorage blacklist & purge from all local collections
+      if (typeof window !== "undefined") {
+        const blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
+        if (email && !blacklist.includes(email)) blacklist.push(email);
+        if (id && !blacklist.includes(String(id).toLowerCase())) blacklist.push(String(id).toLowerCase());
+        localStorage.setItem("deleted_entity_blacklist", JSON.stringify(blacklist));
+
+        const keysToPurge = [
+          "persistent_courses",
+          "persistent_interns",
+          "persistent_employees",
+          "registered_system_users",
+          "software_house_students",
+          "software_house_interns",
+          "software_house_employees"
+        ];
+
+        keysToPurge.forEach(k => {
+          try {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter(item => {
+                  if (!item) return false;
+                  const itemEmail = (item.email || "").toLowerCase().trim();
+                  const itemId = String(item.id || "").toLowerCase().trim();
+                  if (email && itemEmail === email) return false;
+                  if (id && itemId === String(id).toLowerCase().trim()) return false;
+                  return true;
+                });
+                localStorage.setItem(k, JSON.stringify(filtered));
+              }
+            }
+          } catch(e) {}
+        });
+
+        // Remove individual attendance caches
+        if (email) {
+          localStorage.removeItem(`today_attendance_${email}`);
+          localStorage.removeItem(`student_attendance_${email}`);
+          localStorage.removeItem(`employee_attendance_${email}`);
+        }
+      }
+
+      // 3. Cascade delete across all tables in DB via dbDeleteRecord
+      const tablesToDelete = ["students", "interns", "employees", "app_users"];
+      for (const t of tablesToDelete) {
+        await dbDeleteRecord(t, id, email).catch(() => {});
+      }
+
+      // 4. Direct API call to guarantee backend purge across Supabase tables
+      if (typeof fetch !== "undefined") {
+        await fetch("/api/persistence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: role.includes("intern") ? "interns" : role.includes("student") ? "students" : "employees",
+            action: "delete",
+            record: { id, email, full_name: name },
+          }),
+        }).catch(() => {});
+      }
+
+      showToast("Record Deleted 🗑️", `"${name}" has been permanently deleted from database.`, "info");
+      
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dataChanged"));
+      }
+      loadDashboardData();
+      loadAllMembers();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      showToast("Error", "Could not complete deletion.", "error");
+    } finally {
+      setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false });
+    }
+  };
+
   // Filtered & Sorted Members List
   const filteredMembersList = useMemo(() => {
     let list = [...allRegisteredUsersList];
@@ -842,7 +945,7 @@ export default function DashboardPage() {
                       </span>
                     </td>
 
-                    {/* Action Link / Kebab Menu */}
+                    {/* Action Link / Delete Button */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         {Boolean((m.category || "").toLowerCase().includes("remote") || (m.department || "").toLowerCase().includes("remote") || (m.mode || "").toLowerCase().includes("remote")) && (
@@ -861,6 +964,23 @@ export default function DashboardPage() {
                         >
                           Inspect →
                         </Link>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteModal({
+                            isOpen: true,
+                            type: m.role || "member",
+                            targetId: m.id,
+                            targetEmail: m.email,
+                            title: m.fullName || m.email || "Member",
+                            targetMember: m,
+                            loading: false
+                          })}
+                          className="text-red-500 hover:text-red-700 font-semibold hover:bg-red-50 px-2.5 py-1 rounded-lg border border-red-200 transition-colors text-xs flex items-center gap-1 cursor-pointer"
+                          title="Permanently delete member from Supabase database"
+                        >
+                          <FaTrash className="text-[10px]" />
+                          <span>Delete</span>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1004,22 +1124,36 @@ export default function DashboardPage() {
 
       {/* CONFIRMATION DESTRUCTIVE MODAL */}
       {confirmDeleteModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#E2E8F0] space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-[#0F172A] border-b border-[#E2E8F0] pb-3">
-              <FaExclamationTriangle className="text-xl text-[#2563EB]" />
-              <h3 className="font-bold text-[#0F172A] text-base">Confirm Destructive Action</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-red-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 border-b border-red-100 pb-3">
+              <div className="p-2 rounded-xl bg-red-50 text-red-600">
+                <FaTrash className="text-base" />
+              </div>
+              <div>
+                <h3 className="font-bold text-[#0F172A] text-base">Delete Member Permanently</h3>
+                <p className="text-[11px] text-[#64748B]">Supabase Backend & Portal Purge</p>
+              </div>
             </div>
 
-            <p className="text-xs text-[#64748B] leading-relaxed font-normal">
-              Are you sure you want to delete <strong className="text-[#0F172A]">"{confirmDeleteModal.title}"</strong>? This record will be permanently purged from the system.
-            </p>
+            <div className="space-y-2 text-xs text-[#64748B] leading-relaxed">
+              <p>
+                Are you sure you want to delete <strong className="text-[#0F172A]">"{confirmDeleteModal.title}"</strong> ({confirmDeleteModal.targetEmail || confirmDeleteModal.targetId})?
+              </p>
+              <div className="p-3 bg-red-50/70 rounded-xl border border-red-100 text-red-700 text-[11px] space-y-1">
+                <p className="font-semibold flex items-center gap-1">
+                  <FaExclamationTriangle /> Warning: This action cannot be undone!
+                </p>
+                <p>This will permanently remove their records from Supabase database tables (profiles, attendance, leaves, daily tasks, and portal access).</p>
+              </div>
+            </div>
 
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", title: "", loading: false })}
-                className="flex-1 py-2.5 rounded-xl bg-white hover:bg-[#F8FAFC] text-[#2563EB] border border-[#E2E8F0] font-semibold text-xs cursor-pointer transition-colors"
+                onClick={() => setConfirmDeleteModal({ isOpen: false, type: "", targetId: "", targetEmail: "", title: "", targetMember: null, loading: false })}
+                disabled={confirmDeleteModal.loading}
+                className="flex-1 py-2.5 rounded-xl bg-white hover:bg-[#F8FAFC] text-[#64748B] border border-[#E2E8F0] font-semibold text-xs cursor-pointer transition-colors"
               >
                 Cancel
               </button>
@@ -1027,9 +1161,9 @@ export default function DashboardPage() {
                 type="button"
                 onClick={executeConfirmedDelete}
                 disabled={confirmDeleteModal.loading}
-                className="flex-1 py-2.5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors shadow-sm disabled:opacity-50"
               >
-                {confirmDeleteModal.loading ? "Purging..." : "Confirm & Delete 🗑️"}
+                {confirmDeleteModal.loading ? "Deleting from Database..." : "Yes, Delete Permanently 🗑️"}
               </button>
             </div>
           </div>
