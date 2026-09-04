@@ -297,6 +297,8 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
   MEM_CACHE.set(table, {
     data: merged,
     timestamp: Date.now()
+  });
+
   return merged;
 }
 
