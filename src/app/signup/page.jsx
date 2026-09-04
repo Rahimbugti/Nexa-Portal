@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { showToast } from "@/components/Toast";
 import { supabase } from "@/lib/supabase";
-import { saveRegisteredAuthAccount } from "@/lib/studentEnrollmentUtils";
+import { saveRegisteredAuthAccount, checkDuplicateAccountEmail } from "@/lib/studentEnrollmentUtils";
 import { dbSaveRecord } from "@/lib/dbPersistence";
 import { FaLock, FaEnvelope, FaUser, FaBuilding, FaArrowRight, FaShieldAlt, FaEye, FaEyeSlash } from "react-icons/fa";
 
@@ -35,6 +35,13 @@ export default function SignupPage() {
     try {
       const cleanEmail = email.trim().toLowerCase();
       const cleanName = fullName.trim();
+
+      // Check if email already registered across system
+      const isDuplicate = await checkDuplicateAccountEmail(cleanEmail);
+      if (isDuplicate) {
+        throw new Error(`The email "${cleanEmail}" is already registered. Please login instead.`);
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,

@@ -71,25 +71,55 @@ export async function checkDuplicateAccountEmail(email) {
   if (!email || !email.trim()) return false;
   const cleanEmail = email.trim().toLowerCase();
 
-  // Check DB students, interns, and employees active records
+  // 1. Check LocalStorage across all collections
+  if (typeof window !== "undefined") {
+    try {
+      const keys = [
+        "persistent_courses",
+        "software_house_students",
+        "persistent_students",
+        "persistent_interns",
+        "software_house_interns",
+        "persistent_employees",
+        "registered_system_users"
+      ];
+      for (const k of keys) {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const found = list.some(item => (item?.email || item?.student_email || item?.user_email || "").toLowerCase().trim() === cleanEmail);
+            if (found) return true;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 2. Check Database via dbFetch
   try {
-    const students = await dbFetch("students").catch(() => []);
-    const studentMatch = (students || []).find(
-      (s) => s && (s.email || "").trim().toLowerCase() === cleanEmail
-    );
-    if (studentMatch) return true;
+    const [students, interns, employees] = await Promise.all([
+      dbFetch("students").catch(() => []),
+      dbFetch("interns").catch(() => []),
+      dbFetch("employees").catch(() => [])
+    ]);
 
-    const interns = await dbFetch("interns").catch(() => []);
-    const internMatch = (interns || []).find(
-      (i) => i && (i.email || "").trim().toLowerCase() === cleanEmail
-    );
-    if (internMatch) return true;
+    if ((students || []).some(s => (s?.email || "").toLowerCase().trim() === cleanEmail)) return true;
+    if ((interns || []).some(i => (i?.email || "").toLowerCase().trim() === cleanEmail)) return true;
+    if ((employees || []).some(e => (e?.email || "").toLowerCase().trim() === cleanEmail)) return true;
 
-    const employees = await dbFetch("employees").catch(() => []);
-    const empMatch = (employees || []).find(
-      (e) => e && (e.email || "").trim().toLowerCase() === cleanEmail
-    );
-    if (empMatch) return true;
+    // 3. Check Supabase DB tables directly
+    const [dbStu, dbInt, dbEmp, dbAppUser] = await Promise.all([
+      supabase.from("students").select("id").eq("email", cleanEmail).limit(1).catch(() => ({ data: [] })),
+      supabase.from("interns").select("id").eq("email", cleanEmail).limit(1).catch(() => ({ data: [] })),
+      supabase.from("employees").select("id").eq("email", cleanEmail).limit(1).catch(() => ({ data: [] })),
+      supabase.from("app_users").select("id").eq("email", cleanEmail).limit(1).catch(() => ({ data: [] }))
+    ]);
+
+    if (dbStu?.data && dbStu.data.length > 0) return true;
+    if (dbInt?.data && dbInt.data.length > 0) return true;
+    if (dbEmp?.data && dbEmp.data.length > 0) return true;
+    if (dbAppUser?.data && dbAppUser.data.length > 0) return true;
   } catch (e) {}
 
   return false;
@@ -115,7 +145,7 @@ export async function enrollStudentWithCredentials({
   // Duplicate email check
   const isDuplicate = await checkDuplicateAccountEmail(cleanEmail);
   if (isDuplicate) {
-    throw new Error("An account already exists with this email address.");
+    throw new Error(`The email address "${cleanEmail}" is already registered. Please use a different email or log in.`);
   }
 
   let authUserId = `usr_std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -356,7 +386,7 @@ export async function registerEmployeeWithCredentials({
   // Duplicate email check
   const isDuplicate = await checkDuplicateAccountEmail(cleanEmail);
   if (isDuplicate) {
-    throw new Error("An account already exists with this email address.");
+    throw new Error(`The email address "${cleanEmail}" is already registered. Please use a different email or log in.`);
   }
 
   let authUserId = `usr_emp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -449,6 +479,12 @@ export async function registerInternWithCredentials({
   if (!cleanName) throw new Error("Intern full name is required.");
   if (!password || password.length < 6) {
     throw new Error("Temporary password must be at least 6 characters long.");
+  }
+
+  // Duplicate email check across all tables
+  const isDuplicate = await checkDuplicateAccountEmail(cleanEmail);
+  if (isDuplicate) {
+    throw new Error(`The email address "${cleanEmail}" is already registered. Please use a different email or log in.`);
   }
 
   let authUserId = `usr_int_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
