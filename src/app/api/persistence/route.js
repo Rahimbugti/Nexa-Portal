@@ -358,25 +358,50 @@ export async function POST(request) {
         return NextResponse.json({ success: true, saved: dbSaved, error: dbError });
       }
 
-      // 2.2 Students (Student Attendance support)
+      // 2.2 Students (Student Attendance & Remote Student Support)
       if (table === "students") {
         const cleanEmail = (record.email || "").toLowerCase().trim();
         const passVal = record.password || record.assigned_password || "studentpassword123";
-        const stuPayload = {
+        const isRemote = (record.track_type || "").toLowerCase().includes("remote") || record.is_remote === true || (record.batch || "").toLowerCase().includes("remote");
+
+        const fullStuPayload = {
           full_name: record.full_name || cleanEmail.split("@")[0],
           email: cleanEmail,
           phone: record.phone || "",
-          course_name: record.course_name || "Full Stack MERN Web Development",
-          status: record.status || "Active"
+          course_name: record.course_name || record.course || "Full Stack MERN Web Development",
+          status: record.status || "Active",
+          enrollment_no: record.enrollment_no || record.student_id || record.id || `s-${Date.now()}`,
+          admission_date: record.admission_date || record.enrollment_date || record.start_date || new Date().toISOString().split("T")[0],
+          batch: record.batch || (isRemote ? "Batch #14 (Remote Online)" : "Batch #14 (Morning Tech)"),
+          track_type: record.track_type || (isRemote ? "Remote Student" : "On-Site Student"),
+          is_remote: isRemote
         };
 
         if (cleanEmail) {
           try {
             const { data: existS } = await supabase.from("students").select("id").eq("email", cleanEmail).limit(1);
             if (existS && existS.length > 0) {
-              await supabase.from("students").update(stuPayload).eq("id", existS[0].id);
+              const { error: upErr } = await supabase.from("students").update(fullStuPayload).eq("id", existS[0].id);
+              if (upErr) {
+                await supabase.from("students").update({
+                  full_name: fullStuPayload.full_name,
+                  email: cleanEmail,
+                  phone: fullStuPayload.phone,
+                  course_name: fullStuPayload.course_name,
+                  status: fullStuPayload.status
+                }).eq("id", existS[0].id);
+              }
             } else {
-              await supabase.from("students").insert([stuPayload]);
+              const { error: inErr } = await supabase.from("students").insert([fullStuPayload]);
+              if (inErr) {
+                await supabase.from("students").insert([{
+                  full_name: fullStuPayload.full_name,
+                  email: cleanEmail,
+                  phone: fullStuPayload.phone,
+                  course_name: fullStuPayload.course_name,
+                  status: fullStuPayload.status
+                }]);
+              }
             }
           } catch (e) { }
 
@@ -384,7 +409,7 @@ export async function POST(request) {
             const userPayload = {
               email: cleanEmail,
               password: passVal,
-              full_name: stuPayload.full_name,
+              full_name: fullStuPayload.full_name,
               role: "student",
               status: "active"
             };

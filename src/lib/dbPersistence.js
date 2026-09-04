@@ -93,12 +93,11 @@ export function cleanPayloadForDb(record, table = "") {
  */
 function getDedupeKey(item) {
   if (!item) return "";
-  const id = String(item.id || "").toLowerCase().trim();
+  const email = String(item.email || item.student_email || item.assigned_to_email || item.applicant_email || "").toLowerCase().trim();
+  if (email && email.includes("@")) return email;
+  const id = String(item.id || item.student_id || item.employee_id || item.intern_id || "").toLowerCase().trim();
   if (id) return id;
-  const email = String(item.email || "").toLowerCase().trim();
   const title = String(item.title || item.task || item.task_name || item.full_name || item.name || item.client_name || "").toLowerCase().trim();
-  if (email && title) return `${email}_${title}`;
-  if (email) return email;
   return title;
 }
 
@@ -123,7 +122,7 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
     }
   }
   
-  // Read deleted IDs and emails universal blacklist
+  // Read deleted IDs and emails universal blacklist (strictly exact match to prevent false-positive deletions)
   let deletedBlacklist = new Set();
   try {
     if (typeof window !== "undefined") {
@@ -141,7 +140,8 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
             const arr = JSON.parse(raw);
             if (Array.isArray(arr)) {
               arr.forEach(val => {
-                if (val) deletedBlacklist.add(String(val).toLowerCase().trim());
+                const sVal = String(val || "").toLowerCase().trim();
+                if (sVal && sVal.length >= 3) deletedBlacklist.add(sVal);
               });
             }
           } catch(e) {}
@@ -152,21 +152,15 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
 
   const isDeleted = (item) => {
     if (!item) return true;
-    const itemId = String(item.id || "").toLowerCase().trim();
+    const itemId = String(item.id || item.student_id || item.employee_id || item.intern_id || "").toLowerCase().trim();
     const itemEmail = String(item.email || item.student_email || item.assigned_to_email || "").toLowerCase().trim();
-    const itemName = String(item.full_name || item.name || item.title || item.employee_name || "").toLowerCase().trim();
 
-    for (let b of deletedBlacklist) {
-      if (!b) continue;
-      const bClean = String(b).toLowerCase().trim();
-      if (itemId && (itemId === bClean || itemId.includes(bClean) || bClean.includes(itemId))) return true;
-      if (itemEmail && (itemEmail === bClean || itemEmail.includes(bClean) || bClean.includes(itemEmail))) return true;
-      if (itemName && itemName.length >= 3 && (itemName === bClean || itemName.includes(bClean) || bClean.includes(itemName))) return true;
-    }
+    if (itemId && deletedBlacklist.has(itemId)) return true;
+    if (itemEmail && deletedBlacklist.has(itemEmail)) return true;
     return false;
   };
 
-  // 1. Load Database Data via Server Persistence Proxy API (Database is Single Source of Truth)
+  // 1. Load Database Data via Server Persistence Proxy API
   let dbData = [];
   let fetchedFromDb = false;
   try {
@@ -186,17 +180,33 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
     }
   } catch (e) {}
 
-  // 2. Load Local Storage
+  // 2. Load Local Storage with Multi-Key Fallbacks
   let localData = [];
   try {
-    const saved = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null;
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) localData = parsed;
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) localData = parsed;
+      }
+
+      if (table === "students") {
+        const alt1 = JSON.parse(localStorage.getItem("software_house_students") || "[]");
+        const alt2 = JSON.parse(localStorage.getItem("persistent_students") || "[]");
+        const combined = [...localData, ...alt1, ...alt2];
+        const seen = new Set();
+        localData = combined.filter(item => {
+          if (!item) return false;
+          const k = getDedupeKey(item);
+          if (k && seen.has(k)) return false;
+          if (k) seen.add(k);
+          return true;
+        });
+      }
     }
   } catch (e) {}
 
-  // 3. Database & Local Storage Safe Merge (Preserves newly enrolled students on refresh)
+  // 3. Database & Local Storage Safe Merge
   let merged = [];
   if (fetchedFromDb && Array.isArray(dbData)) {
     const map = new Map();
@@ -212,16 +222,31 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
     (dbData || []).forEach((item) => {
       if (!item || isDeleted(item)) return;
       const key = getDedupeKey(item);
-      if (key) {
+      if (key && map.has(key)) {
         const existing = map.get(key) || {};
-        map.set(key, { ...existing, ...item });
-      } else {
-        const fallbackKey = String(item.id || item.email || item.name || Math.random()).toLowerCase().trim();
-        map.set(fallbackKey, item);
+        map.set(key, {
+          ...item,
+          ...existing,
+          id: existing.id || item.id,
+          track_type: existing.track_type || item.track_type || "Remote Student",
+          trackType: existing.trackType || item.trackType || "Remote Student",
+          is_remote: existing.is_remote ?? item.is_remote ?? true,
+          isRemote: existing.isRemote ?? item.isRemote ?? true,
+          batch: existing.batch || item.batch || "Batch #14 (Remote Online)",
+          course_name: existing.course_name || item.course_name || "Full Stack MERN Web Development",
+          tech_domain: existing.tech_domain || item.tech_domain || "Full Stack MERN Web Development",
+          course_fee: existing.course_fee || item.course_fee || 25000,
+          fee_paid: existing.fee_paid || item.fee_paid || 25000,
+          start_date: existing.start_date || item.start_date || item.admission_date,
+          end_date: existing.end_date || item.end_date,
+          progress: existing.progress !== undefined ? existing.progress : (item.progress !== undefined ? item.progress : 0)
+        });
+      } else if (key) {
+        map.set(key, item);
       }
     });
 
-    merged = Array.from(map.values());
+    merged = Array.from(map.values()).filter(i => !isDeleted(i));
 
     if (typeof window !== "undefined") {
       try {
@@ -229,6 +254,7 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
         if (table === "students") {
           localStorage.setItem("persistent_courses", JSON.stringify(merged));
           localStorage.setItem("software_house_students", JSON.stringify(merged));
+          localStorage.setItem("persistent_students", JSON.stringify(merged));
         }
         if (table === "projects") {
           localStorage.setItem("software_house_projects", JSON.stringify(merged));
@@ -299,6 +325,11 @@ export async function dbSaveRecord(table, record) {
     const updated = [record, ...filtered];
     try {
       localStorage.setItem(storageKey, JSON.stringify(updated));
+      if (table === "students") {
+        localStorage.setItem("persistent_courses", JSON.stringify(updated));
+        localStorage.setItem("software_house_students", JSON.stringify(updated));
+        localStorage.setItem("persistent_students", JSON.stringify(updated));
+      }
     } catch(e) {}
   }
 

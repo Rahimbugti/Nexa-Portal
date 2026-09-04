@@ -230,7 +230,7 @@ export default function CoursesPage() {
       },
     ];
 
-    dbFetch("students", [], true).then((data) => {
+    dbFetch("students", initialDefaultStudents, true).then((data) => {
       let blacklist = [];
       try {
         blacklist = JSON.parse(localStorage.getItem("deleted_entity_blacklist") || "[]");
