@@ -41,11 +41,8 @@ export function cleanPayloadForDb(record, table = "") {
   const cleaned = {};
 
   const invalidColumns = [
-    "cnic", "internship_mode", "resources_url", "screen_access_url",
-    "start_date", "end_date", "daily_logs", "work_mode", "is_remote",
-    "course_mode", "reminder_sent", "assigned_password", "enrollment_mode",
-    "auth_user_id", "blood_group", "guardian_phone", "emergency_phone",
-    "total_fee", "course_fee", "submitted_fee", "fee_paid", "remaining_fee"
+    "daily_logs", "resources_url", "screen_access_url",
+    "reminder_sent", "assigned_password"
   ];
 
   Object.keys(record).forEach((key) => {
@@ -83,6 +80,13 @@ export function cleanPayloadForDb(record, table = "") {
     if (record.password || record.assigned_password) {
       cleaned.emergency_contact = `auth:${record.password || record.assigned_password}`;
     }
+  }
+
+  if (table === "interns") {
+    cleaned.full_name = record.full_name || record.name || "";
+    cleaned.name = record.full_name || record.name || "";
+    cleaned.internship_mode = record.internship_mode || (record.is_remote ? "Remote / Online" : "On-Site / Offline");
+    cleaned.course_name = record.course_name || record.tech_domain || "Full Stack MERN Web Development";
   }
 
   return cleaned;
@@ -203,6 +207,19 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
           return true;
         });
       }
+
+      if (table === "interns") {
+        const alt1 = JSON.parse(localStorage.getItem("software_house_interns") || "[]");
+        const combined = [...localData, ...alt1];
+        const seen = new Set();
+        localData = combined.filter(item => {
+          if (!item) return false;
+          const k = getDedupeKey(item);
+          if (k && seen.has(k)) return false;
+          if (k) seen.add(k);
+          return true;
+        });
+      }
     }
   } catch (e) {}
 
@@ -218,7 +235,7 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
       if (key) map.set(key, item);
     });
 
-    // 2. Overlay / Merge DB data while preserving local fields (e.g. track_type, is_remote)
+    // 2. Overlay / Merge DB data while preserving local fields (e.g. track_type, is_remote, internship_mode)
     (dbData || []).forEach((item) => {
       if (!item || isDeleted(item)) return;
       const key = getDedupeKey(item);
@@ -228,18 +245,23 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
           ...item,
           ...existing,
           id: existing.id || item.id,
+          // Preserve student fields
           track_type: existing.track_type || item.track_type || "Remote Student",
           trackType: existing.trackType || item.trackType || "Remote Student",
-          is_remote: existing.is_remote ?? item.is_remote ?? true,
-          isRemote: existing.isRemote ?? item.isRemote ?? true,
+          is_remote: existing.is_remote ?? item.is_remote ?? (existing.internship_mode || "").toLowerCase().includes("remote"),
+          isRemote: existing.isRemote ?? item.isRemote ?? (existing.internship_mode || "").toLowerCase().includes("remote"),
           batch: existing.batch || item.batch || "Batch #14 (Remote Online)",
-          course_name: existing.course_name || item.course_name || "Full Stack MERN Web Development",
-          tech_domain: existing.tech_domain || item.tech_domain || "Full Stack MERN Web Development",
+          course_name: existing.course_name || item.course_name || existing.tech_domain || "Full Stack MERN Web Development",
+          tech_domain: existing.tech_domain || item.tech_domain || existing.course_name || "Full Stack MERN Web Development",
           course_fee: existing.course_fee || item.course_fee || 25000,
           fee_paid: existing.fee_paid || item.fee_paid || 25000,
+          // Preserve intern fields
+          internship_mode: existing.internship_mode || item.internship_mode || (existing.is_remote ? "Remote / Online" : "On-Site / Offline"),
           start_date: existing.start_date || item.start_date || item.admission_date,
           end_date: existing.end_date || item.end_date,
-          progress: existing.progress !== undefined ? existing.progress : (item.progress !== undefined ? item.progress : 0)
+          progress: existing.progress !== undefined ? existing.progress : (item.progress !== undefined ? item.progress : 0),
+          status: existing.status || item.status || "active",
+          role: existing.role || item.role
         });
       } else if (key) {
         map.set(key, item);
@@ -256,6 +278,10 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
           localStorage.setItem("software_house_students", JSON.stringify(merged));
           localStorage.setItem("persistent_students", JSON.stringify(merged));
         }
+        if (table === "interns") {
+          localStorage.setItem("persistent_interns", JSON.stringify(merged));
+          localStorage.setItem("software_house_interns", JSON.stringify(merged));
+        }
         if (table === "projects") {
           localStorage.setItem("software_house_projects", JSON.stringify(merged));
           localStorage.setItem("software_house_full_projects", JSON.stringify(merged));
@@ -271,8 +297,6 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
   MEM_CACHE.set(table, {
     data: merged,
     timestamp: Date.now()
-  });
-
   return merged;
 }
 
@@ -329,6 +353,10 @@ export async function dbSaveRecord(table, record) {
         localStorage.setItem("persistent_courses", JSON.stringify(updated));
         localStorage.setItem("software_house_students", JSON.stringify(updated));
         localStorage.setItem("persistent_students", JSON.stringify(updated));
+      }
+      if (table === "interns") {
+        localStorage.setItem("persistent_interns", JSON.stringify(updated));
+        localStorage.setItem("software_house_interns", JSON.stringify(updated));
       }
     } catch(e) {}
   }

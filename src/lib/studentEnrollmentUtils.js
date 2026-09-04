@@ -473,31 +473,43 @@ export async function registerInternWithCredentials({
     console.warn("Supabase Auth intern creation warning:", e);
   }
 
+  const isRemote = (internData.internship_mode || "").toLowerCase().includes("remote") || internData.is_remote === true;
+
   // Intern Profile Record
   const internPayload = {
+    id: `i-${Date.now()}`,
     full_name: cleanName,
+    name: cleanName,
     email: cleanEmail,
     phone: internData.phone || "",
     course_name: internData.course_name || internData.tech_domain || "Full Stack MERN Web Development",
-    internship_mode: internData.internship_mode || "On-Site / Offline",
+    tech_domain: internData.tech_domain || internData.course_name || "Full Stack MERN Web Development",
+    internship_mode: internData.internship_mode || (isRemote ? "Remote / Online" : "On-Site / Offline"),
     start_date: internData.start_date || new Date().toISOString().split("T")[0],
     progress: Number(internData.progress || 0),
-    status: "active"
+    role: isRemote ? "Remote Intern" : "On-Site Intern",
+    status: "active",
+    is_remote: isRemote,
+    created_at: new Date().toISOString()
   };
 
-  let createdInternRecord = { ...internPayload, id: `i-${Date.now()}` };
+  let createdInternRecord = internPayload;
 
-  try {
-    const res = await fetch("/api/persistence", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ table: "interns", record: internPayload, action: "save" })
-    });
-    const json = await res.json();
-    if (json.data && json.data[0]) {
-      createdInternRecord = json.data[0];
-    }
-  } catch (err) {}
+  // 1. Save to persistence storage (Local Storage + DB)
+  await dbSaveRecord("interns", internPayload).catch(() => {});
+
+  if (typeof window !== "undefined") {
+    try {
+      ["persistent_interns", "software_house_interns"].forEach((key) => {
+        const raw = localStorage.getItem(key);
+        const existing = raw ? JSON.parse(raw) : [];
+        const filtered = existing.filter(
+          (i) => i && (i.email || "").toLowerCase().trim() !== cleanEmail
+        );
+        localStorage.setItem(key, JSON.stringify([internPayload, ...filtered]));
+      });
+    } catch (e) {}
+  }
 
   // Save auth credentials to cloud database so all devices can log in
   await saveRegisteredAuthAccount({

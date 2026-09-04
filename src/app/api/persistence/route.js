@@ -429,6 +429,80 @@ export async function POST(request) {
         return NextResponse.json({ success: true });
       }
 
+      // 2.2b Interns (Internship & Remote Supervision Support)
+      if (table === "interns") {
+        const cleanEmail = (record.email || "").toLowerCase().trim();
+        const passVal = record.password || record.assigned_password || "internpassword123";
+        const isRemote = (record.internship_mode || "").toLowerCase().includes("remote") ||
+          (record.track_type || "").toLowerCase().includes("remote") ||
+          record.is_remote === true;
+
+        const fullInternPayload = {
+          full_name: record.full_name || record.name || cleanEmail.split("@")[0],
+          name: record.full_name || record.name || cleanEmail.split("@")[0],
+          email: cleanEmail,
+          phone: record.phone || "",
+          course_name: record.course_name || record.tech_domain || "Full Stack MERN Web Development",
+          tech_domain: record.tech_domain || record.course_name || "Full Stack MERN Web Development",
+          internship_mode: record.internship_mode || (isRemote ? "Remote / Online" : "On-Site / Offline"),
+          start_date: record.start_date || new Date().toISOString().split("T")[0],
+          progress: Number(record.progress || 0),
+          status: record.status || "active",
+          role: isRemote ? "Remote Intern" : "On-Site Intern",
+          is_remote: isRemote
+        };
+
+        if (cleanEmail) {
+          try {
+            const { data: existI } = await supabase.from("interns").select("id").eq("email", cleanEmail).limit(1);
+            if (existI && existI.length > 0) {
+              const { error: upErr } = await supabase.from("interns").update(fullInternPayload).eq("id", existI[0].id);
+              if (upErr) {
+                await supabase.from("interns").update({
+                  full_name: fullInternPayload.full_name,
+                  email: cleanEmail,
+                  phone: fullInternPayload.phone,
+                  course_name: fullInternPayload.course_name,
+                  internship_mode: fullInternPayload.internship_mode,
+                  status: fullInternPayload.status
+                }).eq("id", existI[0].id);
+              }
+            } else {
+              const { error: inErr } = await supabase.from("interns").insert([fullInternPayload]);
+              if (inErr) {
+                await supabase.from("interns").insert([{
+                  full_name: fullInternPayload.full_name,
+                  email: cleanEmail,
+                  phone: fullInternPayload.phone,
+                  course_name: fullInternPayload.course_name,
+                  internship_mode: fullInternPayload.internship_mode,
+                  status: fullInternPayload.status
+                }]);
+              }
+            }
+          } catch (e) {}
+
+          // Also create/update auth account for intern login
+          try {
+            const userPayload = {
+              email: cleanEmail,
+              password: passVal,
+              full_name: fullInternPayload.full_name,
+              role: "intern",
+              status: "active"
+            };
+            const { data: existU } = await supabase.from("app_users").select("id").eq("email", cleanEmail).limit(1);
+            if (existU && existU.length > 0) {
+              await supabase.from("app_users").update(userPayload).eq("id", existU[0].id);
+            } else {
+              await supabase.from("app_users").insert([userPayload]);
+            }
+          } catch (e) {}
+        }
+
+        return NextResponse.json({ success: true, data: [fullInternPayload] });
+      }
+
       // 2.3 Student Attendance
       if (table === "attendance" && record.student_id) {
         const attDate = record.date || record.attendance_date || new Date().toISOString().split("T")[0];
