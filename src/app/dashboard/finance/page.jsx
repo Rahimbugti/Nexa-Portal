@@ -354,7 +354,7 @@ export default function ComprehensiveFinanceAccountingPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 bg-white min-h-screen p-3 sm:p-6 text-slate-900">
+    <div className="w-full space-y-6 bg-white min-h-screen p-3 sm:p-6 text-slate-900">
       {/* Top Banner & Multi-Tab Navigation (Requirement #1) */}
       <div className="bg-white rounded-2xl p-6 border border-[#E2E8F0] shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>

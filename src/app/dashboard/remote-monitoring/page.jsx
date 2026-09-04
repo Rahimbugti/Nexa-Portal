@@ -731,7 +731,7 @@ export default function RemoteMonitoringPage() {
   const liveActiveCount = filteredLiveUsers.filter((u) => u.isOnline || u.isSharing).length;
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-12 font-sans max-w-7xl mx-auto">
+    <div className="space-y-4 sm:space-y-6 pb-12 font-sans w-full">
       {/* Hidden Canvas for Frame Processing */}
       <canvas ref={canvasRef} className="hidden" />
 

@@ -209,7 +209,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto text-[#0F172A]">
+    <div className="space-y-6 w-full text-[#0F172A]">
       <Modal
         isOpen={modal.isOpen}
         title={modal.title}

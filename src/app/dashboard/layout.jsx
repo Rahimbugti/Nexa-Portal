@@ -150,7 +150,7 @@ export default function DashboardLayout({ children }) {
       }`}>
         <Navbar isSidebarOpen={sidebarOpen} onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
 
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 w-full">
           {children}
         </main>
       </div>

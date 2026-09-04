@@ -676,7 +676,7 @@ export default function EmployeeDedicatedDashboardPage() {
   }, []);
 
   return (
-    <div className="space-[#F8FAFC] space-y-6 max-w-7xl mx-auto">
+    <div className="space-[#F8FAFC] space-y-6 w-full">
       {/* Modal Notification */}
       <Modal isOpen={modal.isOpen} title={modal.title} message={modal.message} type={modal.type} onClose={closeModal} />
 

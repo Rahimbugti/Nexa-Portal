@@ -405,7 +405,7 @@ export default function ClientPortalDashboardPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 bg-slate-50 min-h-screen p-3 sm:p-6 text-slate-900">
+    <div className="w-full space-y-6 bg-slate-50 min-h-screen p-3 sm:p-6 text-slate-900">
       {/* Top Banner & Client Authentication Badge */}
       <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-lg flex flex-col lg:flex-row lg:items-center justify-between gap-6 border border-slate-800">
         <div className="space-y-1">
