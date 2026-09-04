@@ -168,85 +168,48 @@ export async function POST(request) {
       // 1. Direct ID deletion if valid DB ID
       if (isValidDbId) {
         await supabase.from(table).delete().eq("id", id).catch(() => {});
+        if (table === "students") await supabase.from("students").delete().eq("id", id).catch(() => {});
+        if (table === "interns") await supabase.from("interns").delete().eq("id", id).catch(() => {});
+        if (table === "employees") await supabase.from("employees").delete().eq("id", id).catch(() => {});
       }
 
-      // 2. Query and delete from students table by email, name, or enrollment
-      if (cleanEmail || cleanName) {
-        try {
-          const { data: matchedStudents } = await supabase
-            .from("students")
-            .select("id")
-            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
-            .catch(() => ({ data: [] }));
-
-          if (matchedStudents && matchedStudents.length > 0) {
-            for (const s of matchedStudents) {
-              await supabase.from("students").delete().eq("id", s.id).catch(() => {});
-            }
-          }
-        } catch (e) {}
-
-        // 3. Query and delete from interns table by email or name
-        try {
-          const { data: matchedInterns } = await supabase
-            .from("interns")
-            .select("id")
-            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
-            .catch(() => ({ data: [] }));
-
-          if (matchedInterns && matchedInterns.length > 0) {
-            for (const i of matchedInterns) {
-              await supabase.from("interns").delete().eq("id", i.id).catch(() => {});
-            }
-          }
-        } catch (e) {}
-
-        // 4. Query and delete from employees table by email or name
-        try {
-          const { data: matchedEmployees } = await supabase
-            .from("employees")
-            .select("id")
-            .or(cleanEmail ? `email.ilike.%${cleanEmail}%` : `full_name.ilike.%${cleanName}%`)
-            .catch(() => ({ data: [] }));
-
-          if (matchedEmployees && matchedEmployees.length > 0) {
-            for (const emp of matchedEmployees) {
-              await supabase.from("employees").delete().eq("id", emp.id).catch(() => {});
-            }
-          }
-        } catch (e) {}
-
-        // 5. Query and delete from app_users
-        if (cleanEmail) {
-          try {
-            const { data: matchedUsers } = await supabase
-              .from("app_users")
-              .select("id")
-              .ilike("email", `%${cleanEmail}%`)
-              .catch(() => ({ data: [] }));
-
-            if (matchedUsers && matchedUsers.length > 0) {
-              for (const u of matchedUsers) {
-                await supabase.from("app_users").delete().eq("id", u.id).catch(() => {});
-              }
-            }
-          } catch (e) {}
-        }
-      }
-
-      // 6. Direct cascade deletes across all operational tables
+      // 2. Direct clean Email deletion across all profile and auth tables in Supabase
       if (cleanEmail) {
-        await supabase.from("payrolls").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("performances").delete().ilike("email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("monitoring_sessions").delete().ilike("user_email", `%${cleanEmail}%`).catch(() => {});
-        await supabase.from("attendance").delete().or(`user_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%,student_id.ilike.%${cleanEmail}%`).catch(() => {});
-        await supabase.from("daily_tasks").delete().or(`assigned_to_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%`).catch(() => {});
-        await supabase.from("leaves").delete().or(`applicant_email.ilike.%${cleanEmail}%,email.ilike.%${cleanEmail}%`).catch(() => {});
-        await supabase.from("screenshot_logs").delete().or(`email.ilike.%${cleanEmail}%,employeeId.ilike.%${cleanEmail}%`).catch(() => {});
-        await supabase.from("activity_logs").delete().or(`email.ilike.%${cleanEmail}%,employeeId.ilike.%${cleanEmail}%`).catch(() => {});
+        await Promise.all([
+          supabase.from("students").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("students").delete().ilike("email", cleanEmail).catch(() => {}),
+          supabase.from("interns").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("interns").delete().ilike("email", cleanEmail).catch(() => {}),
+          supabase.from("employees").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("employees").delete().ilike("email", cleanEmail).catch(() => {}),
+          supabase.from("app_users").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("app_users").delete().ilike("email", cleanEmail).catch(() => {}),
+          supabase.from("attendance").delete().eq("user_email", cleanEmail).catch(() => {}),
+          supabase.from("attendance").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("attendance").delete().eq("student_id", cleanEmail).catch(() => {}),
+          supabase.from("attendance").delete().eq("employee_id", cleanEmail).catch(() => {}),
+          supabase.from("leaves").delete().eq("applicant_email", cleanEmail).catch(() => {}),
+          supabase.from("leaves").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("daily_tasks").delete().eq("assigned_to_email", cleanEmail).catch(() => {}),
+          supabase.from("daily_tasks").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("payrolls").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("performances").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("screenshot_logs").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("activity_logs").delete().eq("email", cleanEmail).catch(() => {}),
+          supabase.from("monitoring_sessions").delete().eq("user_email", cleanEmail).catch(() => {})
+        ]);
       }
 
-      // 7. For tasks or projects, delete by title if ID was local/temporary
+      // 3. Delete by Full Name
+      if (cleanName && cleanName.length >= 3) {
+        await Promise.all([
+          supabase.from("students").delete().eq("full_name", cleanName).catch(() => {}),
+          supabase.from("interns").delete().eq("full_name", cleanName).catch(() => {}),
+          supabase.from("employees").delete().eq("full_name", cleanName).catch(() => {})
+        ]);
+      }
+
+      // 4. For tasks or projects, delete by title
       if (task_title || title) {
         const titleField = table === "daily_tasks" ? "task_title" : "title";
         await supabase.from(table).delete().eq(titleField, task_title || title).catch(() => {});
