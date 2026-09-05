@@ -8,6 +8,8 @@ import { showToast } from "@/components/Toast";
 import { fetchRecentActivities, formatTimeAgo, clearActivityLogs } from "@/lib/activityUtils";
 import { enrollStudentWithCredentials, registerEmployeeWithCredentials } from "@/lib/studentEnrollmentUtils";
 import FinancialChart from "@/components/FinancialChart";
+import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
+import AdminRecentSubmissionsWidget from "@/components/AdminRecentSubmissionsWidget";
 import {
   FaUsers,
   FaCalendarCheck,
@@ -879,7 +881,15 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* 3. MULTI-SERIES FINANCIAL CHART */}
+      {/* 2. ADMIN RECENT TASK SUBMISSIONS MONITOR (FOR MANAGEMENT) */}
+      {(role === "admin" || role === "hr" || role === "super_admin") && (
+        <AdminRecentSubmissionsWidget />
+      )}
+
+      {/* 3. USER TODAY'S ASSIGNED TASKS WIDGET */}
+      <UserTodayTasksWidget />
+
+      {/* 4. MULTI-SERIES FINANCIAL CHART */}
       <FinancialChart
         revenue={stats.monthlyRevenue}
         expenses={stats.monthlyExpenses}

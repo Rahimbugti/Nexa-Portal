@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import Modal from "@/components/Modal";
 import { showToast } from "@/components/Toast";
+import { supabase } from "@/lib/supabase";
 import {
   FaDesktop,
   FaCamera,
@@ -41,6 +42,15 @@ import {
   FaVideo,
   FaEye,
   FaExternalLinkAlt,
+  FaUserPlus,
+  FaPlusCircle,
+  FaToggleOn,
+  FaToggleOff,
+  FaUserTimes,
+  FaUser,
+  FaCheck,
+  FaTimes,
+  FaSpinner,
 } from "react-icons/fa";
 
 import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
@@ -105,9 +115,28 @@ export default function RemoteMonitoringPage() {
   const [appUsageList, setAppUsageList] = useState(INITIAL_APP_USAGE);
   const [settings, setSettings] = useState({ retentionDays: 60, minInterval: 5, maxInterval: 15 });
 
-  // === Registered & Live Users List ===
+  // === Registered & Live Users List (Supabase Source of Truth) ===
   const [registeredUsers, setRegisteredUsers] = useState([]);
   const [liveSessionsList, setLiveSessionsList] = useState([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+
+  // === Remote Users Management State ===
+  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [userSelectionMode, setUserSelectionMode] = useState("existing"); // 'existing' or 'custom'
+  const [availableSystemUsers, setAvailableSystemUsers] = useState([]);
+  const [userSearchModalQuery, setUserSearchModalQuery] = useState("");
+  const [newRemoteUser, setNewRemoteUser] = useState({
+    name: "",
+    email: "",
+    department: "Software Engineering",
+    designation: "Remote Developer",
+    role: "employee",
+    deviceName: "Windows Workstation",
+  });
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [isTogglingStatus, setIsTogglingStatus] = useState(null);
 
   // === Admin Filters & Search State ===
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState("All");
@@ -175,6 +204,7 @@ export default function RemoteMonitoringPage() {
   }, []);
 
   const loadMonitoringData = async () => {
+    setIsLoadingUsers(true);
     try {
       const [sessionsData, screenshotsData, timelinesData, monSessions] = await Promise.all([
         getRemoteWorkSessions(),
@@ -188,45 +218,198 @@ export default function RemoteMonitoringPage() {
       setWorkTimelines(timelinesData || []);
       setLiveSessionsList(monSessions || []);
 
-      // Load registered students, interns, and employees
+      // 1. Fetch Remote Users directly from Supabase / API (Persistent Source of Truth)
+      let remoteUsersList = [];
+      try {
+        const res = await fetch("/api/remote-users", { cache: "no-store" });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            remoteUsersList = json.data.map((u) => ({
+              id: u.id,
+              user_id: u.user_id || u.id,
+              name: u.user_name || u.name || (u.user_email ? u.user_email.split("@")[0] : "Remote User"),
+              email: (u.user_email || u.email || "").toLowerCase().trim(),
+              department: u.department || "Software Engineering",
+              designation: u.designation || "Remote Member",
+              role: u.role || "employee",
+              status: u.status || (u.is_active ? "active" : "inactive"),
+              is_active: u.is_active !== undefined ? u.is_active : u.status !== "inactive",
+              is_remote: true,
+              created_at: u.created_at,
+            }));
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Could not fetch remote users from /api/remote-users:", apiErr);
+      }
+
+      // 2. Load system registered students, interns, and employees for the "Add Remote User" selector
       const [dbStudents, dbInterns, dbEmployees] = await Promise.all([
         dbFetch("students").catch(() => []),
         dbFetch("interns").catch(() => []),
         dbFetch("employees").catch(() => []),
       ]);
 
-      const userMap = new Map();
-      [...(dbStudents || []), ...(dbInterns || []), ...(dbEmployees || [])].forEach((u) => {
-        const name = u.full_name || u.name || u.student_name || u.email;
-        if (name && !userMap.has(name)) {
-          userMap.set(name, {
-            id: u.id || u.email || `u-${Math.random()}`,
+      const systemMap = new Map();
+      [...(dbEmployees || []), ...(dbInterns || []), ...(dbStudents || [])].forEach((u) => {
+        const email = (u.email || u.student_email || "").toLowerCase().trim();
+        const name = u.full_name || u.name || u.student_name || email;
+        if (email && !systemMap.has(email)) {
+          systemMap.set(email, {
+            id: u.id || email,
             name: name,
+            email: email,
             department:
+              u.department ||
               u.course_name ||
               u.tech_domain ||
-              u.department ||
               u.designation ||
-              u.internship_mode ||
-              "Software Engineering",
-            email: (u.email || "").toLowerCase().trim(),
-            role: u.role || (u.internship_mode ? "Remote Intern" : "Remote Employee"),
-            is_remote: true,
+              (u.internship_mode ? "Internship Program" : "Software Engineering"),
+            designation: u.designation || (u.internship_mode ? "Intern" : "Employee"),
+            role: u.role || (u.internship_mode ? "intern" : u.course_name ? "student" : "employee"),
           });
         }
       });
+      setAvailableSystemUsers(Array.from(systemMap.values()));
 
-      const allUsersList = Array.from(userMap.values());
-      setRegisteredUsers(allUsersList);
-
-      if (allUsersList.length > 0 && !employeeName) {
-        const firstUser = allUsersList[0];
+      // 3. Set Registered Users strictly from database (Single Source of Truth)
+      setRegisteredUsers(remoteUsersList);
+      if (remoteUsersList.length > 0 && !employeeName) {
+        const firstUser = remoteUsersList[0];
         setEmployeeName(firstUser.name);
         setDepartment(firstUser.department);
         setEmployeeId(firstUser.id);
       }
     } catch (error) {
       console.error("Error loading remote monitoring data:", error);
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
+  // === Handlers for Remote Users Supabase Management ===
+  const handleAddRemoteUser = async (e) => {
+    if (e) e.preventDefault();
+    if (!newRemoteUser.name?.trim() || !newRemoteUser.email?.trim()) {
+      showToast("Missing Information", "Full name and email address are required.", "warning");
+      return;
+    }
+
+    const cleanEmail = newRemoteUser.email.toLowerCase().trim();
+    const cleanName = newRemoteUser.name.trim();
+
+    // Check duplicate locally before sending to DB
+    const alreadyExists = registeredUsers.some(
+      (u) => (u.email || "").toLowerCase().trim() === cleanEmail
+    );
+    if (alreadyExists) {
+      showToast("Duplicate User", `"${cleanName}" (${cleanEmail}) is already added to Remote Monitoring.`, "warning");
+      return;
+    }
+
+    setIsAddingUser(true);
+    try {
+      const res = await fetch("/api/remote-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_user",
+          userData: {
+            name: cleanName,
+            email: cleanEmail,
+            department: newRemoteUser.department || "Software Engineering",
+            designation: newRemoteUser.designation || "Remote Member",
+            role: newRemoteUser.role || "employee",
+            deviceName: newRemoteUser.deviceName || "Desktop Workstation",
+          },
+          requesterEmail: userEmail || "admin@gmail.com",
+          requesterRole: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to add remote user to Supabase.");
+      }
+
+      showToast("Remote User Added 🎉", data.message || `User "${cleanName}" is now stored permanently in Supabase!`, "success");
+      setIsAddUserModalOpen(false);
+      setNewRemoteUser({
+        name: "",
+        email: "",
+        department: "Software Engineering",
+        designation: "Remote Developer",
+        role: "employee",
+        deviceName: "Windows Workstation",
+      });
+      setUserSearchModalQuery("");
+      await loadMonitoringData();
+    } catch (err) {
+      console.error("Error adding remote user:", err);
+      showToast("Failed to Add User ❌", err.message || "Could not save remote user.", "error");
+    } finally {
+      setIsAddingUser(false);
+    }
+  };
+
+  const handleToggleUserStatus = async (user) => {
+    const userEmailToToggle = (user.email || "").toLowerCase().trim();
+    setIsTogglingStatus(user.id || userEmailToToggle);
+    try {
+      const res = await fetch("/api/remote-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "toggle_status",
+          id: user.id,
+          userEmail: userEmailToToggle,
+          currentStatus: user.status || (user.is_active ? "active" : "inactive"),
+          requesterEmail: userEmail || "admin@gmail.com",
+          requesterRole: role,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to toggle status.");
+      }
+      showToast("Status Updated", data.message || `User status updated to ${data.status}.`, "success");
+      await loadMonitoringData();
+    } catch (err) {
+      console.error("Error updating user status:", err);
+      showToast("Update Failed ❌", err.message, "error");
+    } finally {
+      setIsTogglingStatus(null);
+    }
+  };
+
+  const handleDeleteRemoteUser = async () => {
+    if (!deleteConfirmUser) return;
+    setIsDeletingUser(true);
+    try {
+      const res = await fetch("/api/remote-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_user",
+          id: deleteConfirmUser.id,
+          userEmail: (deleteConfirmUser.email || "").toLowerCase().trim(),
+          requesterEmail: userEmail || "admin@gmail.com",
+          requesterRole: role,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete user from Supabase.");
+      }
+      showToast("User Removed 🗑️", `User "${deleteConfirmUser.name}" permanently removed from Remote Monitoring.`, "info");
+      setDeleteConfirmUser(null);
+      await loadMonitoringData();
+    } catch (err) {
+      console.error("Error removing remote user:", err);
+      showToast("Removal Failed ❌", err.message, "error");
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -700,33 +883,45 @@ export default function RemoteMonitoringPage() {
   });
 
   // Filtered Live Users List for Admin View
-  const filteredLiveUsers = registeredUsers.map((u) => {
-    const activeSess = liveSessionsList.find(
-      (s) =>
-        (s.user_email && s.user_email.toLowerCase() === (u.email || "").toLowerCase()) ||
-        (s.user_name && s.user_name.toLowerCase() === u.name.toLowerCase()) ||
-        String(s.user_id) === String(u.id)
-    );
+  const filteredLiveUsers = registeredUsers
+    .filter((u) => {
+      if (selectedDepartmentFilter !== "All" && u.department !== selectedDepartmentFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = u.name?.toLowerCase().includes(q);
+        const matchEmail = u.email?.toLowerCase().includes(q);
+        const matchDept = u.department?.toLowerCase().includes(q);
+        if (!matchName && !matchEmail && !matchDept) return false;
+      }
+      return true;
+    })
+    .map((u) => {
+      const activeSess = liveSessionsList.find(
+        (s) =>
+          (s.user_email && s.user_email.toLowerCase() === (u.email || "").toLowerCase()) ||
+          (s.user_name && s.user_name.toLowerCase() === u.name.toLowerCase()) ||
+          String(s.user_id) === String(u.id)
+      );
 
-    const isOnline = activeSess && activeSess.status === "Active";
-    const isSharing = activeSess && activeSess.screen_sharing === "Active";
+      const isOnline = activeSess && activeSess.status === "Active";
+      const isSharing = activeSess && activeSess.screen_sharing === "Active";
 
-    let sessionDuration = "—";
-    if (isOnline && activeSess.started_at) {
-      const diffSec = Math.max(0, Math.floor((Date.now() - new Date(activeSess.started_at).getTime()) / 1000));
-      sessionDuration = formatTimeHHMMSS(diffSec);
-    }
+      let sessionDuration = "—";
+      if (isOnline && activeSess.started_at) {
+        const diffSec = Math.max(0, Math.floor((Date.now() - new Date(activeSess.started_at).getTime()) / 1000));
+        sessionDuration = formatTimeHHMMSS(diffSec);
+      }
 
-    return {
-      ...u,
-      isOnline: Boolean(isOnline),
-      isSharing: Boolean(isSharing),
-      sessionStartTime: activeSess?.started_at ? new Date(activeSess.started_at).toLocaleTimeString() : "—",
-      sessionDuration: sessionDuration,
-      lastSeen: activeSess?.last_seen ? "Just now" : "Offline",
-      activeSessionId: activeSess?.id || null,
-    };
-  });
+      return {
+        ...u,
+        isOnline: Boolean(isOnline),
+        isSharing: Boolean(isSharing),
+        sessionStartTime: activeSess?.started_at ? new Date(activeSess.started_at).toLocaleTimeString() : "—",
+        sessionDuration: sessionDuration,
+        lastSeen: activeSess?.last_seen ? "Just now" : "Offline",
+        activeSessionId: activeSess?.id || null,
+      };
+    });
 
   const liveActiveCount = filteredLiveUsers.filter((u) => u.isOnline || u.isSharing).length;
 
@@ -1126,103 +1321,228 @@ export default function RemoteMonitoringPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              {role === "admin" && (
+                <button
+                  onClick={() => {
+                    setUserSelectionMode("existing");
+                    setIsAddUserModalOpen(true);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <FaUserPlus className="h-3.5 w-3.5" />
+                  <span>Add Remote User</span>
+                </button>
+              )}
+
               <button
                 onClick={loadMonitoringData}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                disabled={isLoadingUsers}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
               >
-                <FaSync className="h-3.5 w-3.5 text-blue-600" />
+                <FaSync className={`h-3.5 w-3.5 text-blue-600 ${isLoadingUsers ? "animate-spin" : ""}`} />
                 <span>Refresh Status</span>
               </button>
             </div>
           </div>
 
-          {/* Live Users Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredLiveUsers.map((u) => {
-              const isCurrentlyStreaming = u.isSharing;
-
-              return (
-                <div
-                  key={u.id}
-                  className={`rounded-2xl border bg-white p-5 shadow-xs transition-all relative overflow-hidden space-y-4 ${
-                    isCurrentlyStreaming
-                      ? "border-emerald-400 ring-2 ring-emerald-500/20 shadow-md"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  {/* Top Bar: User Name & Role */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                        {u.name.charAt(0)}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-sm">{u.name}</h3>
-                        <p className="text-[11px] text-slate-500 truncate max-w-[170px]" title={u.email}>
-                          {u.email}
-                        </p>
-                      </div>
+          {/* Loading Skeletons */}
+          {isLoadingUsers ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs animate-pulse space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-200" />
+                    <div className="space-y-2 flex-1">
+                      <div className="h-4 bg-slate-200 rounded w-1/2" />
+                      <div className="h-3 bg-slate-100 rounded w-3/4" />
                     </div>
-
-                    <span
-                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1.5 ${
-                        u.isOnline
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : "bg-slate-100 text-slate-600 border-slate-200"
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          u.isOnline ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
-                        }`}
-                      />
-                      {u.isOnline ? "Online" : "Offline"}
-                    </span>
                   </div>
+                  <div className="h-24 bg-slate-50 rounded-xl" />
+                  <div className="h-10 bg-slate-200 rounded-xl" />
+                </div>
+              ))}
+            </div>
+          ) : filteredLiveUsers.length === 0 ? (
+            /* Empty State */
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center space-y-4">
+              <div className="mx-auto h-14 w-14 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 text-2xl">
+                <FaUserPlus />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-slate-900">No Remote Users Found</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  {searchQuery || selectedDepartmentFilter !== "All"
+                    ? "No users matched your current search or filter."
+                    : "No users have been registered in Remote Monitoring yet. Click below to add a user permanently to Supabase."}
+                </p>
+              </div>
+              {role === "admin" && (
+                <button
+                  onClick={() => {
+                    setUserSelectionMode("existing");
+                    setIsAddUserModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs cursor-pointer"
+                >
+                  <FaUserPlus className="h-3.5 w-3.5" />
+                  <span>Add First Remote User</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            /* Live Users Cards Grid */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredLiveUsers.map((u) => {
+                const isCurrentlyStreaming = u.isSharing;
+                const isUserActive = u.status === "active" || u.is_active === true;
 
-                  {/* Metadata Specs Box */}
-                  <div className="space-y-2 text-xs bg-slate-50 p-3.5 rounded-xl border border-slate-100 text-slate-700">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400">Department/Track:</span>
-                      <strong className="text-slate-800 text-[11px] truncate max-w-[150px]">{u.department}</strong>
+                return (
+                  <div
+                    key={u.id}
+                    className={`rounded-2xl border bg-white p-5 shadow-xs transition-all relative overflow-hidden space-y-4 flex flex-col justify-between ${
+                      isCurrentlyStreaming
+                        ? "border-emerald-400 ring-2 ring-emerald-500/20 shadow-md"
+                        : "border-slate-200 hover:border-slate-300"
+                    } ${!isUserActive ? "opacity-75 bg-slate-50/50" : ""}`}
+                  >
+                    <div className="space-y-4">
+                      {/* Top Bar: User Name & Role & Badges */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-10 h-10 rounded-xl text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0 ${
+                            isUserActive
+                              ? "bg-gradient-to-br from-blue-600 to-indigo-700"
+                              : "bg-gradient-to-br from-slate-400 to-slate-600"
+                          }`}>
+                            {u.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-slate-900 text-sm truncate">{u.name}</h3>
+                            <p className="text-[11px] text-slate-500 truncate" title={u.email}>
+                              {u.email}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1.5 ${
+                              u.isOnline
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-slate-100 text-slate-600 border-slate-200"
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                u.isOnline ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                              }`}
+                            />
+                            {u.isOnline ? "Online" : "Offline"}
+                          </span>
+
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-semibold border ${
+                              isUserActive
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}
+                          >
+                            {isUserActive ? "Active" : "Inactive"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Metadata Specs Box */}
+                      <div className="space-y-2 text-xs bg-slate-50 p-3.5 rounded-xl border border-slate-100 text-slate-700">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Department/Track:</span>
+                          <strong className="text-slate-800 text-[11px] truncate max-w-[150px]">{u.department}</strong>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Designation / Role:</span>
+                          <strong className="text-slate-800 text-[11px] truncate max-w-[150px]">{u.designation || u.role}</strong>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Screen Sharing:</span>
+                          <span
+                            className={`font-bold text-[11px] flex items-center gap-1 ${
+                              u.isSharing ? "text-emerald-600" : "text-slate-500"
+                            }`}
+                          >
+                            {u.isSharing ? "🟢 Sharing (Live)" : "⏸️ Inactive"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Session Duration:</span>
+                          <strong className="font-mono text-slate-900 text-xs">{u.sessionDuration}</strong>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Last Seen:</span>
+                          <span className="text-slate-600 text-[11px]">{u.lastSeen}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400">Screen Sharing:</span>
-                      <span
-                        className={`font-bold text-[11px] flex items-center gap-1 ${
-                          u.isSharing ? "text-emerald-600" : "text-slate-500"
+
+                    {/* Action Buttons & Admin Controls */}
+                    <div className="space-y-2 pt-1 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenLiveViewer(u)}
+                        className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs ${
+                          isCurrentlyStreaming
+                            ? "bg-purple-600 hover:bg-purple-700 text-white shadow-purple-200 animate-pulse"
+                            : "bg-slate-900 hover:bg-slate-800 text-white"
                         }`}
                       >
-                        {u.isSharing ? "🟢 Sharing (Entire Screen)" : "⏸️ Inactive"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400">Session Duration:</span>
-                      <strong className="font-mono text-slate-900 text-xs">{u.sessionDuration}</strong>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400">Last Seen:</span>
-                      <span className="text-slate-600 text-[11px]">{u.lastSeen}</span>
+                        <FaDesktop className="h-3.5 w-3.5" />
+                        <span>View Live Screen 🖥️</span>
+                      </button>
+
+                      {role === "admin" && (
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleUserStatus(u)}
+                            disabled={isTogglingStatus === (u.id || u.email)}
+                            className={`flex-1 py-1.5 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                              isUserActive
+                                ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            }`}
+                            title={isUserActive ? "Deactivate User" : "Activate User"}
+                          >
+                            {isTogglingStatus === (u.id || u.email) ? (
+                              <FaSpinner className="h-3 w-3 animate-spin" />
+                            ) : isUserActive ? (
+                              <>
+                                <FaToggleOn className="h-3.5 w-3.5 text-amber-600" />
+                                <span>Set Inactive</span>
+                              </>
+                            ) : (
+                              <>
+                                <FaToggleOff className="h-3.5 w-3.5 text-emerald-600" />
+                                <span>Set Active</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmUser(u)}
+                            className="p-1.5 px-2.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            title="Remove from Remote Monitoring"
+                          >
+                            <FaTrash className="h-3 w-3 text-rose-600" />
+                            <span>Remove</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  {/* Action Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenLiveViewer(u)}
-                    className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs ${
-                      isCurrentlyStreaming
-                        ? "bg-purple-600 hover:bg-purple-700 text-white shadow-purple-200 animate-pulse"
-                        : "bg-slate-900 hover:bg-slate-800 text-white"
-                    }`}
-                  >
-                    <FaDesktop className="h-3.5 w-3.5" />
-                    <span>View Live Screen 🖥️</span>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1814,7 +2134,303 @@ export default function RemoteMonitoringPage() {
         </Modal>
       )}
 
-      {/* === MODAL 5: DESTRUCTIVE ACTION CONFIRMATION MODAL === */}
+      {/* === MODAL 6: ADD REMOTE USER (SUPABASE PERSISTENCE) === */}
+      {isAddUserModalOpen && (
+        <Modal
+          isOpen={isAddUserModalOpen}
+          onClose={() => {
+            if (!isAddingUser) {
+              setIsAddUserModalOpen(false);
+              setUserSearchModalQuery("");
+            }
+          }}
+          title="Add Remote User to Monitoring"
+        >
+          <div className="space-y-4 text-xs">
+            {/* Mode Switcher */}
+            <div className="flex rounded-xl bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => setUserSelectionMode("existing")}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  userSelectionMode === "existing"
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Select Existing System User
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserSelectionMode("custom")}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  userSelectionMode === "custom"
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Create Custom Remote Profile
+              </button>
+            </div>
+
+            {/* TAB 1: SELECT EXISTING SYSTEM USER */}
+            {userSelectionMode === "existing" && (
+              <div className="space-y-3">
+                <div className="relative">
+                  <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-3.5 w-3.5" />
+                  <input
+                    type="text"
+                    value={userSearchModalQuery}
+                    onChange={(e) => setUserSearchModalQuery(e.target.value)}
+                    placeholder="Search employees, interns, or students by name/email..."
+                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  />
+                </div>
+
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1 divide-y divide-slate-100">
+                  {availableSystemUsers
+                    .filter((u) => {
+                      if (!userSearchModalQuery.trim()) return true;
+                      const q = userSearchModalQuery.toLowerCase();
+                      return (
+                        u.name?.toLowerCase().includes(q) ||
+                        u.email?.toLowerCase().includes(q) ||
+                        u.department?.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((sysUser) => {
+                      const isAlreadyAdded = registeredUsers.some(
+                        (r) => (r.email || "").toLowerCase() === (sysUser.email || "").toLowerCase()
+                      );
+
+                      return (
+                        <div
+                          key={sysUser.email}
+                          className="pt-2 first:pt-0 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0 flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-xs shrink-0">
+                              {sysUser.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 text-xs truncate">{sysUser.name}</p>
+                              <p className="text-[10px] text-slate-500 truncate">{sysUser.email} • {sysUser.department}</p>
+                            </div>
+                          </div>
+
+                          {isAlreadyAdded ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                              <FaCheck className="h-2.5 w-2.5" /> In Monitoring
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isAddingUser}
+                              onClick={async () => {
+                                setNewRemoteUser({
+                                  name: sysUser.name,
+                                  email: sysUser.email,
+                                  department: sysUser.department || "Software Engineering",
+                                  designation: sysUser.designation || "Remote Member",
+                                  role: sysUser.role || "employee",
+                                  deviceName: "Workstation",
+                                });
+                                // Execute addition directly
+                                setIsAddingUser(true);
+                                try {
+                                  const res = await fetch("/api/remote-users", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "add_user",
+                                      userData: {
+                                        name: sysUser.name,
+                                        email: sysUser.email,
+                                        department: sysUser.department || "Software Engineering",
+                                        designation: sysUser.designation || "Remote Member",
+                                        role: sysUser.role || "employee",
+                                        deviceName: "Workstation",
+                                      },
+                                      requesterEmail: userEmail || "admin@gmail.com",
+                                      requesterRole: role,
+                                    }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok || !data.success) {
+                                    throw new Error(data.error || "Failed to add remote user.");
+                                  }
+                                  showToast("Remote User Added 🎉", `User "${sysUser.name}" added to Supabase database.`, "success");
+                                  setIsAddUserModalOpen(false);
+                                  setUserSearchModalQuery("");
+                                  await loadMonitoringData();
+                                } catch (err) {
+                                  showToast("Error Adding User ❌", err.message, "error");
+                                } finally {
+                                  setIsAddingUser(false);
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px] shrink-0 transition-colors shadow-xs cursor-pointer flex items-center gap-1"
+                            >
+                              <FaPlusCircle className="h-3 w-3" />
+                              <span>Add</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                  {availableSystemUsers.length === 0 && (
+                    <p className="text-center text-slate-400 py-4">No system users found. Switch to custom tab to create one.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: CREATE CUSTOM REMOTE USER */}
+            {userSelectionMode === "custom" && (
+              <form onSubmit={handleAddRemoteUser} className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRemoteUser.name}
+                    onChange={(e) => setNewRemoteUser({ ...newRemoteUser, name: e.target.value })}
+                    placeholder="e.g. Ahmed Khan"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">Email Address (Unique Login) *</label>
+                  <input
+                    type="email"
+                    required
+                    value={newRemoteUser.email}
+                    onChange={(e) => setNewRemoteUser({ ...newRemoteUser, email: e.target.value })}
+                    placeholder="e.g. ahmed@company.com"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">Department / Domain</label>
+                    <input
+                      type="text"
+                      value={newRemoteUser.department}
+                      onChange={(e) => setNewRemoteUser({ ...newRemoteUser, department: e.target.value })}
+                      placeholder="e.g. Frontend Engineering"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">Designation / Role</label>
+                    <input
+                      type="text"
+                      value={newRemoteUser.designation}
+                      onChange={(e) => setNewRemoteUser({ ...newRemoteUser, designation: e.target.value })}
+                      placeholder="e.g. Senior React Developer"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">User Role</label>
+                    <select
+                      value={newRemoteUser.role}
+                      onChange={(e) => setNewRemoteUser({ ...newRemoteUser, role: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    >
+                      <option value="employee">Employee</option>
+                      <option value="intern">Intern</option>
+                      <option value="student">Student</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">Device Workstation</label>
+                    <input
+                      type="text"
+                      value={newRemoteUser.deviceName}
+                      onChange={(e) => setNewRemoteUser({ ...newRemoteUser, deviceName: e.target.value })}
+                      placeholder="e.g. Dell XPS 15 (Remote)"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddUserModalOpen(false)}
+                    disabled={isAddingUser}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isAddingUser}
+                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    {isAddingUser ? <FaSpinner className="animate-spin h-3.5 w-3.5" /> : <FaPlusCircle className="h-3.5 w-3.5" />}
+                    <span>{isAddingUser ? "Saving to Supabase..." : "Save Remote User"}</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* === MODAL 7: DELETE REMOTE USER CONFIRMATION MODAL === */}
+      {deleteConfirmUser && (
+        <Modal
+          isOpen={!!deleteConfirmUser}
+          onClose={() => {
+            if (!isDeletingUser) setDeleteConfirmUser(null);
+          }}
+          title="Remove Remote User"
+        >
+          <div className="space-y-4 text-xs text-slate-700">
+            <div className="p-3.5 bg-rose-50 rounded-xl border border-rose-200 text-rose-800 space-y-1">
+              <div className="flex items-center gap-2 font-bold">
+                <FaExclamationTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                <span>Remove user from Remote Monitoring?</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                This will permanently delete <strong>{deleteConfirmUser.name}</strong> ({deleteConfirmUser.email}) from the Supabase <code>remote_users</code> table.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmUser(null)}
+                disabled={isDeletingUser}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteRemoteUser}
+                disabled={isDeletingUser}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                {isDeletingUser ? <FaSpinner className="animate-spin h-3.5 w-3.5" /> : <FaTrash className="h-3.5 w-3.5" />}
+                <span>{isDeletingUser ? "Removing..." : "Permanently Remove"}</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* === MODAL 8: DESTRUCTIVE ACTION CONFIRMATION MODAL === */}
       {confirmModal.isOpen && (
         <Modal
           isOpen={confirmModal.isOpen}

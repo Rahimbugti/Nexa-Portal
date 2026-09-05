@@ -1,6 +1,6 @@
-// Office Authorized Networks Table & Multi-Factor Network Verification Engine
+// Office Authorized Networks & Public IP Verification Engine (via ipify API)
+// Enterprise Security Standard for Student Attendance
 
-// Authorized Office Network Configuration (Stored in DB / Master Settings)
 export const AUTHORIZED_OFFICE_NETWORK_CONFIG = {
   office_name: "Software House Main Office Wi-Fi",
   wifi_name: "Campus High-Speed Office Wi-Fi",
@@ -11,72 +11,106 @@ export const AUTHORIZED_OFFICE_NETWORK_CONFIG = {
   status: "Active"
 };
 
-// Default Registered Office Networks Table
-export const DEFAULT_OFFICE_NETWORKS = [
-  {
-    id: "net-101",
-    office_name: "Software House Main Office Wi-Fi",
-    wifi_name: "Campus High-Speed Office Wi-Fi",
-    authorized_ipv4: "192.168.100.144",
-    subnet_mask: "255.255.255.0",
-    default_gateway: "192.168.100.1",
-    public_ip_address: "39.46.69.123",
-    status: "Active",
-    created_at: "2026-08-01",
-    updated_at: "2026-08-01",
-  }
-];
-
-// Helper to get active office networks from DB / local cache
 export function getActiveOfficeNetworks() {
-  try {
-    const saved = localStorage.getItem("software_house_office_networks");
-    if (saved) return JSON.parse(saved);
-  } catch(e) {}
-  return DEFAULT_OFFICE_NETWORKS;
+  return [AUTHORIZED_OFFICE_NETWORK_CONFIG];
 }
 
-// Get user's current public IP via ipify API strictly (returns null if offline or fetch fails)
+
+/**
+ * Fetches the user's current Public IP strictly using the ipify API
+ * Fallback to seeip only if ipify is temporarily unreachable
+ * Returns null if internet is disconnected or both fail (Fail-Closed)
+ */
 export async function fetchCurrentPublicIp() {
+  if (typeof window !== "undefined" && !window.navigator.onLine) {
+    return null;
+  }
+
+  // 1. Primary: ipify API
   try {
-    const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch("https://api.ipify.org?format=json", {
+      cache: "no-store",
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.ip) return data.ip;
+      if (data && data.ip && typeof data.ip === "string") {
+        return data.ip.trim();
+      }
     }
-  } catch (err) {}
+  } catch (err) {
+    console.debug("ipify fetch notice:", err?.message);
+  }
 
+  // 2. Secondary fallback: seeip.org
   try {
-    const res2 = await fetch("https://api.seeip.org/jsonip", { cache: "no-store" });
+    const controller2 = new AbortController();
+    const timeoutId2 = setTimeout(() => controller2.abort(), 4000);
+    const res2 = await fetch("https://api.seeip.org/jsonip", {
+      cache: "no-store",
+      signal: controller2.signal
+    });
+    clearTimeout(timeoutId2);
     if (res2.ok) {
       const data2 = await res2.json();
-      if (data2 && data2.ip) return data2.ip;
+      if (data2 && data2.ip && typeof data2.ip === "string") {
+        return data2.ip.trim();
+      }
     }
-  } catch (e) {}
+  } catch (err2) {
+    console.debug("seeip fetch notice:", err2?.message);
+  }
 
-  // If network disconnected or ipify unreachable
-  return "Disconnected / Offline";
+  return null;
 }
 
-// Detect user's current network details (Local IPv4, Gateway, Subnet, Public IP via ipify)
+/**
+ * Fetches the currently authorized Office Public IP from Supabase / API
+ */
+export async function fetchAuthorizedOfficePublicIp() {
+  try {
+    const res = await fetch("/api/attendance/office-ip", { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.office_public_ip) {
+        return data.office_public_ip.trim();
+      }
+    }
+  } catch (e) {
+    console.debug("Office IP fetch notice:", e?.message);
+  }
+
+  try {
+    const saved = localStorage.getItem("software_house_office_public_ip");
+    if (saved) return saved.trim();
+  } catch (e) {}
+
+  return AUTHORIZED_OFFICE_NETWORK_CONFIG.public_ip_address.trim();
+}
+
+/**
+ * Detect user's current network details (Local host, Public IP via ipify)
+ */
 export async function detectCurrentNetworkDetails() {
   const publicIp = await fetchCurrentPublicIp();
   const localIpv4 = typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1"
     ? window.location.hostname
     : "192.168.100.144";
-  
-  const defaultGateway = "192.168.100.1";
-  const subnetMask = "255.255.255.0";
 
   return {
     localIpv4,
-    defaultGateway,
-    subnetMask,
-    publicIp
+    defaultGateway: "192.168.100.1",
+    subnetMask: "255.255.255.0",
+    publicIp: publicIp || "Disconnected / Offline"
   };
 }
 
-// Helper to log attendance attempts (Audit Log)
+/**
+ * Log attendance network attempt in local audit storage
+ */
 export function logAttendanceAttempt(attemptObj) {
   try {
     const savedLogs = localStorage.getItem("software_house_attendance_audit_logs");
@@ -87,122 +121,116 @@ export function logAttendanceAttempt(attemptObj) {
       date: new Date().toISOString().split("T")[0],
       ...attemptObj
     };
-    const updated = [newLog, ...existing];
+    const updated = [newLog, ...existing.slice(0, 49)];
     localStorage.setItem("software_house_attendance_audit_logs", JSON.stringify(updated));
     return newLog;
-  } catch(e) {
+  } catch (e) {
     return null;
   }
 }
 
-// Helper to detect if a student or employee is assigned to Remote Work / Online Learning
-export function checkIsRemoteUser(userEmail, userRole) {
-  const emailLower = String(userEmail || "").toLowerCase().trim();
-  const roleLower = String(userRole || "").toLowerCase().trim();
-
-  // If user is explicitly set to On-Site in registered users or employee cache, require Office Wi-Fi
-  try {
-    const registered = JSON.parse(localStorage.getItem("registered_system_users") || "[]");
-    const foundUser = registered.find(u => (u.email || "").toLowerCase().trim() === emailLower);
-    if (foundUser && (foundUser.work_mode === "onsite" || foundUser.employment_type === "On-Site")) {
-      return false;
-    }
-  } catch (e) {}
-
-  try {
-    const emps = JSON.parse(localStorage.getItem("persistent_employees") || "[]");
-    const foundEmp = emps.find(e => (e.email || "").toLowerCase().trim() === emailLower);
-    if (foundEmp && (foundEmp.work_mode === "onsite" || foundEmp.employment_type === "On-Site (Full Time)")) {
-      return false;
-    }
-  } catch (e) {}
-
-  // BY DEFAULT: Remote Mode is ACTIVE for all accounts (Ipify API OFF - Attendance Allowed Anywhere)!
-  return true;
-}
-
-// Single Active Office Network Verification using ipify API
-export async function verifyOfficeWifiAttendance({ userId, userEmail, userRole, userName, isRemoteOverride }) {
-  const isRemote = isRemoteOverride || checkIsRemoteUser(userEmail || userId, userRole);
-
-  if (isRemote) {
-    // Ipify API / Wi-Fi restriction OFF for Remote Student / Member!
-    logAttendanceAttempt({
-      userId: userId || userEmail,
-      userEmail: userEmail || userId,
-      userName,
-      userRole,
-      attemptIp: "Remote / Anywhere Access",
-      officePublicIp: "Remote Work Mode",
-      status: "REMOTE VERIFIED 🌐",
-      verificationStatus: "Remote Mode Active",
-      reason: "Ipify / Wi-Fi Restriction Disabled for Remote Student / Staff"
-    });
-
-    return {
-      success: true,
-      isRemote: true,
-      currentPublicIp: "Remote Access (Anywhere)",
-      activeOfficeNetwork: { office_name: "Remote Mode (Ipify OFF)", wifi_name: "Remote Student Access" },
-      message: "🌐 Remote Student / Member Mode Active: Wi-Fi & Ipify IP Restriction Disabled. You can mark attendance directly from anywhere!"
-    };
-  }
+/**
+ * Verify Office Wi-Fi Attendance strictly based on User Role & ipify Public IP
+ * 
+ * Rules:
+ * - Student role: STRICT IP MATCH REQUIRED (Must match authorized Office Public IP)
+ * - If ipify fails / offline: FAIL CLOSED (Attendance Blocked)
+ * - Employees/Admins/Interns: Allowed with audit logging
+ */
+export async function verifyOfficeWifiAttendance({ userId, userEmail, userRole, userName }) {
+  const cleanRole = String(userRole || "").toLowerCase().trim();
+  const isStudent = cleanRole === "student" || cleanRole === "course_student";
 
   const currentPublicIp = await fetchCurrentPublicIp();
-  const officeNetworks = getActiveOfficeNetworks();
-  let activeOfficeNetwork = officeNetworks.find(net => net.status === "Active") || DEFAULT_OFFICE_NETWORKS[0];
+  const authorizedOfficeIp = await fetchAuthorizedOfficePublicIp();
 
-  // Strict Check 1: Disconnected / Offline
-  if (!currentPublicIp || currentPublicIp === "Disconnected / Offline") {
+  // 1. Connection / IP Detection Check (Fail Closed)
+  if (!currentPublicIp) {
     logAttendanceAttempt({
-      userId,
+      userId: userId || userEmail,
       userEmail,
       userName,
       userRole,
-      attemptIp: "Offline / No Internet",
-      officePublicIp: activeOfficeNetwork.public_ip_address || "Office Wi-Fi",
+      attemptIp: "Offline / Unable to Verify",
+      officePublicIp: authorizedOfficeIp,
       status: "FAILED ❌",
-      reason: "No Internet Connection or Wi-Fi Disconnected"
+      reason: "ipify verification failed or internet disconnected"
     });
 
     return {
       success: false,
-      currentPublicIp: "Disconnected / Offline",
-      activeOfficeNetwork,
-      errorMessage: "❌ Attendance Blocked: Internet / Office Wi-Fi is disconnected. Please connect to authorized Wi-Fi and try again."
+      isVerified: false,
+      currentPublicIp: "Offline / Disconnected",
+      officePublicIp: authorizedOfficeIp,
+      errorMessage: "Unable to verify office network. Please check your internet connection and try again."
     };
   }
 
-  // When Wi-Fi/Internet is active, sync active office network IP with current connected IP so authorized office Wi-Fi matches
-  activeOfficeNetwork.public_ip_address = currentPublicIp;
-  try {
-    const updatedNets = officeNetworks.map(net => 
-      (net.id === activeOfficeNetwork.id || net.status === "Active")
-        ? { ...net, public_ip_address: currentPublicIp, updated_at: new Date().toISOString() }
-        : net
-    );
-    localStorage.setItem("software_house_office_networks", JSON.stringify(updatedNets.length > 0 ? updatedNets : [activeOfficeNetwork]));
-  } catch(e) {}
+  // 2. Strict Student Role Verification
+  if (isStudent) {
+    const isIpMatch = currentPublicIp.trim().toLowerCase() === authorizedOfficeIp.trim().toLowerCase();
 
+    if (!isIpMatch) {
+      logAttendanceAttempt({
+        userId: userId || userEmail,
+        userEmail,
+        userName,
+        userRole,
+        attemptIp: currentPublicIp,
+        officePublicIp: authorizedOfficeIp,
+        status: "REJECTED 🛑",
+        reason: "Public IP does not match Office Wi-Fi IP"
+      });
+
+      return {
+        success: false,
+        isVerified: false,
+        currentPublicIp,
+        officePublicIp: authorizedOfficeIp,
+        errorMessage: "Attendance can only be marked while connected to the office network."
+      };
+    }
+
+    // IP Matched Successfully for Student
+    logAttendanceAttempt({
+      userId: userId || userEmail,
+      userEmail,
+      userName,
+      userRole,
+      attemptIp: currentPublicIp,
+      officePublicIp: authorizedOfficeIp,
+      status: "VERIFIED 🟢",
+      reason: "Office Public IP Matched via ipify"
+    });
+
+    return {
+      success: true,
+      isVerified: true,
+      isStudent: true,
+      currentPublicIp,
+      officePublicIp: authorizedOfficeIp,
+      message: "Office Wi-Fi network verified successfully."
+    };
+  }
+
+  // 3. Employee / Staff / Admin / Intern Flow
   logAttendanceAttempt({
-    userId,
+    userId: userId || userEmail,
     userEmail,
     userName,
     userRole,
     attemptIp: currentPublicIp,
-    officePublicIp: currentPublicIp,
-    officeName: activeOfficeNetwork.office_name,
-    wifiName: activeOfficeNetwork.wifi_name,
-    status: "VERIFIED ✅",
-    verificationStatus: "Verified",
-    reason: "ipify Public IP Matches Office Wi-Fi Network"
+    officePublicIp: authorizedOfficeIp,
+    status: "VERIFIED 🟢",
+    reason: "Staff / Remote Mode"
   });
 
   return {
     success: true,
+    isVerified: true,
+    isStudent: false,
     currentPublicIp,
-    activeOfficeNetwork,
-    message: "✅ Office Wi-Fi Verified Successfully. Connected to authorized company network."
+    officePublicIp: authorizedOfficeIp,
+    message: "Network verified."
   };
 }
-

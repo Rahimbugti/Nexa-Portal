@@ -329,3 +329,56 @@ export function minutesToTime(minutes) {
   const displayHours = hours % 12 || 12;
   return `${displayHours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")} ${period}`;
 }
+
+/**
+ * Fetch Student Attendance History with range filters and calculated summary
+ */
+export async function fetchStudentAttendanceHistory({
+  studentId = "",
+  from = "",
+  to = "",
+  month = "",
+  date = "",
+  requesterEmail = "",
+  requesterRole = "admin"
+} = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (studentId) params.append("studentId", studentId);
+    if (from) params.append("from", from);
+    if (to) params.append("to", to);
+    if (month) params.append("month", month);
+    if (date) params.append("date", date);
+    if (requesterEmail) params.append("requesterEmail", requesterEmail);
+    if (requesterRole) params.append("requesterRole", requesterRole);
+
+    const response = await fetch(`/api/attendance/student?${params.toString()}`);
+    const result = await response.json();
+    return {
+      records: result?.data || [],
+      summary: result?.summary || null,
+      success: result?.success ?? false
+    };
+  } catch (e) {
+    console.error("Error fetching student attendance history:", e);
+    return { records: [], summary: null, success: false, error: e.message };
+  }
+}
+
+/**
+ * Trigger server-side daily auto-absent processing
+ */
+export async function triggerDailyAutoAbsentJob(targetDate = "") {
+  try {
+    const response = await fetch("/api/attendance/auto-absent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: targetDate })
+    });
+    return await response.json();
+  } catch (e) {
+    console.error("Error triggering auto-absent job:", e);
+    return { success: false, error: e.message };
+  }
+}
+

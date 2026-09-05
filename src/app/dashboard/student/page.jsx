@@ -9,6 +9,7 @@ import { generatePrintableStudentFeeReceiptPdf } from "@/lib/generateStudentRece
 import { generatePrintable3MonthStudentCertificatePdf } from "@/lib/generate3MonthStudentCertificatePdf";
 import { generatePrintableInternshipExperienceCertificatePdf } from "@/lib/generateInternshipExperienceCertificatePdf";
 import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
+import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import { calculate30DayFeeCycles } from "@/lib/studentEnrollmentUtils";
 import { isRecordFromToday, getTodayDateString } from "@/lib/attendanceUtils";
 import { startScreenBroadcast, stopScreenBroadcast, WebRTCViewerClient } from "@/lib/webrtcScreenService";
@@ -1767,6 +1768,13 @@ export default function StudentDedicatedDashboardPage() {
           </div>
         </div>
       )}
+
+      {/* === USER TODAY'S ASSIGNED TASKS WIDGET (SUPABASE RECURRING DAILY TASK ENGINE) === */}
+      <UserTodayTasksWidget
+        userEmail={studentInfo.email}
+        userName={studentInfo.name}
+        userRole={isIntern ? "intern" : "student"}
+      />
 
       {/* === SCHEDULED LIVE SESSIONS & VIDEO MEETINGS (High-Priority Student Alert) === */}
       {myStudentMeetings.length > 0 && (

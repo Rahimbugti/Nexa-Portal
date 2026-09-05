@@ -31,6 +31,13 @@ export const TABLE_STORAGE_KEYS = {
   registered_accounts: "registered_system_users",
   app_users: "registered_system_users",
   student_attendance: "student_attendance_records",
+  task_assignment_groups: "task_assignment_groups",
+  task_assignments: "task_assignments",
+  daily_task_instances: "daily_task_instances",
+  task_submissions: "task_submissions",
+  task_notifications: "task_notifications",
+  push_subscriptions: "push_subscriptions",
+  remote_users: "remote_users",
 };
 
 /**

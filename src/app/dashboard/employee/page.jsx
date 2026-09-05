@@ -5,6 +5,7 @@ import Link from "next/link";
 import { dbFetch, dbSaveRecord, dbSaveList } from "@/lib/dbPersistence";
 import Modal from "@/components/Modal";
 import { showToast } from "@/components/Toast";
+import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import { verifyOfficeWifiAttendance } from "@/lib/attendanceIpUtils";
 import { isRecordFromToday, isRecordFromYesterday, getTodayDateString, getEmployeeCheckInStatus } from "@/lib/attendanceUtils";
 import {
@@ -1463,155 +1464,13 @@ export default function EmployeeDedicatedDashboardPage() {
           )}
         </div>
 
-        {/* MY ASSIGNED TASKS */}
-        <div className="bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
-            <h2 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
-              <FaTasks className="text-[#2563EB]" />
-              <span>My Assigned Tasks</span>
-            </h2>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#2563EB] bg-[#EFF6FF] px-2.5 py-1 rounded-full border border-[#2563EB]/20">
-                {myTasks.length} Assigned
-              </span>
-              <Link href="/dashboard/tasks" className="text-xs font-bold text-[#2563EB] hover:underline hidden sm:inline-block">
-                Task Manager →
-              </Link>
-            </div>
-          </div>
-
-          {myTasks.length > 0 && (() => {
-            const completedCount = myTasks.filter(t => t.status === "Completed").length;
-            const taskProgressSum = myTasks.reduce((acc, t) => {
-              if (t.status === "Completed") return acc + 100;
-              const curSecs = Number(t.timerSeconds || t.total_working_seconds || 0);
-              if (t.status === "In Progress" || curSecs > 0) {
-                const targetSeconds = (Number(t.target_days) || 1) * 3600;
-                const timeProgress = Math.min(95, Math.max(5, Math.round((curSecs / targetSeconds) * 100)));
-                return acc + timeProgress;
-              }
-              return acc;
-            }, 0);
-            const employeeTaskPct = Math.round(taskProgressSum / myTasks.length);
-
-            return (
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4 space-y-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                    <FaChartLine className="text-blue-600" />
-                    <span>Deliverables Completion Score</span>
-                  </span>
-                  <span className="font-black text-blue-600 font-mono text-sm">
-                    {employeeTaskPct}%
-                    <span className="text-[11px] text-slate-500 font-normal ml-1.5">
-                      ({completedCount} of {myTasks.length} Done)
-                    </span>
-                  </span>
-                </div>
-                <div className="w-full bg-white rounded-full h-2.5 overflow-hidden border border-blue-200 p-0.5">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full transition-all duration-500 shadow-xs"
-                    style={{ width: `${employeeTaskPct}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })()}
-
-          {myTasks.length === 0 ? (
-            <div className="p-8 text-center bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] text-[#64748B] text-xs italic">
-              No tasks assigned to you currently. Check back later or notify Admin.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {myTasks.map((t) => {
-                const targetDays = t.target_days || 1;
-                const dueDate = t.dueDate || t.due_date;
-                const daysRemaining = dueDate
-                  ? Math.ceil((new Date(dueDate).getTime() - new Date().setHours(0,0,0,0)) / 86400000)
-                  : null;
-
-                return (
-                  <div key={t.id} className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="text-xs font-bold text-[#0F172A]">{t.task || t.task_title || "Assigned Work Item"}</h3>
-                        <p className="text-[11px] text-[#64748B] mt-0.5">{t.description || "Complete assigned project deliverables as per guidelines."}</p>
-                      </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase border shrink-0 ${
-                        t.status === "Completed"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : t.status === "In Progress"
-                          ? "bg-blue-50 text-blue-700 border-blue-200"
-                          : "bg-amber-50 text-amber-700 border-amber-200"
-                      }`}>
-                        {t.status || "Pending"}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#64748B] pt-1 border-t border-[#E2E8F0]">
-                      <div className="flex items-center gap-2 font-medium">
-                        <span>Due: <strong className="text-[#0F172A]">{dueDate || "Today"}</strong></span>
-                        {t.target_days && (
-                          <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold border border-blue-200">
-                            ⏱️ {targetDays} Day(s) Target
-                          </span>
-                        )}
-                        {daysRemaining !== null && (
-                          <span className={`font-semibold ${daysRemaining < 0 ? "text-rose-600" : daysRemaining === 0 ? "text-amber-600" : "text-slate-600"}`}>
-                            {t.status === "Completed"
-                              ? "✓ Completed"
-                              : daysRemaining > 1
-                              ? `⏳ ${daysRemaining} days remaining`
-                              : daysRemaining === 1
-                              ? "⏳ Due tomorrow"
-                              : daysRemaining === 0
-                              ? "⚠️ Due today"
-                              : `🔴 Overdue by ${Math.abs(daysRemaining)} day(s)`}
-                          </span>
-                        )}
-                      </div>
-                      <span>Priority: <strong className="text-[#2563EB]">{t.priority || "Normal"}</strong></span>
-                    </div>
-
-                  {/* Task Actions */}
-                  <div className="flex items-center gap-2 pt-2">
-                    {t.status !== "In Progress" && t.status !== "Completed" && (
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateTaskStatus(t.id, "In Progress")}
-                        className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-                      >
-                        <FaPlay className="text-[9px]" /> Start Task
-                      </button>
-                    )}
-
-                    {t.status === "In Progress" && (
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateTaskStatus(t.id, "Pending")}
-                        className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-                      >
-                        <FaPause className="text-[9px]" /> Pause
-                      </button>
-                    )}
-
-                    {t.status !== "Completed" && (
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateTaskStatus(t.id, "Completed")}
-                        className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-                      >
-                        <FaCheckCircle className="text-[9px]" /> Complete
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          )}
-        </div>
+        {/* MY ASSIGNED TASKS — SUPABASE RECURRING DAILY TASKS WIDGET */}
+        <UserTodayTasksWidget
+          userEmail={employeeEmail}
+          userName={employeeName}
+          userRole="employee"
+          className="border-[#E2E8F0] shadow-sm"
+        />
       </div>
 
       {/* SECTION 3: BOTTOM FULL-WIDTH ATTENDANCE HISTORY TABLE */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
@@ -24,9 +24,18 @@ import {
   FaCalendarCheck,
   FaFilter,
   FaFilePdf,
-  FaDownload
+  FaDownload,
+  FaSyncAlt,
+  FaBolt
 } from "react-icons/fa";
-import { generatePrintableAttendanceListPdf, generatePrintableUserMonthlyAttendancePdf, generateSingleUserAttendancePdf } from "@/lib/generateAttendancePdf";
+import {
+  generatePrintableAttendanceListPdf,
+  generatePrintableUserMonthlyAttendancePdf,
+  generateSingleUserAttendancePdf,
+  generateStudentAttendancePdf
+} from "@/lib/generateAttendancePdf";
+import { triggerDailyAutoAbsentJob } from "@/lib/studentAttendanceUtils";
+
 
 // Helper for Today string
 function getTodayDateString() {
@@ -208,9 +217,17 @@ export default function AdminAttendanceHistoryHub() {
 
   // Selected User Calendar
   const [userCalendar, setUserCalendar] = useState([]);
+  
+  // Date Filtering for Selected User
+  const [userDatePreset, setUserDatePreset] = useState("all"); // "all", "today", "this_week", "this_month", "month", "custom"
+  const [userCustomFrom, setUserCustomFrom] = useState("");
+  const [userCustomTo, setUserCustomTo] = useState("");
+  const [userSelectedMonth, setUserSelectedMonth] = useState(getTodayDateString().slice(0, 7));
+  const [runningAutoAbsent, setRunningAutoAbsent] = useState(false);
 
   // View Mode: "individual" (Inspector calendar) vs "master_table" (Global logs)
   const [activeTab, setActiveTab] = useState("individual");
+
 
   // Master Table Filter States
   const [fromDate, setFromDate] = useState("");
@@ -525,17 +542,79 @@ export default function AdminAttendanceHistoryHub() {
     return true;
   });
 
-  // Calculate Metrics for Selected User
-  const workingDays = userCalendar.filter(d => !d.is_sunday);
-  const presentDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("present") || (d.attendance_status || "").toLowerCase().includes("on time"));
-  const lateDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("late") || (d.attendance_status || "").toLowerCase().includes("deduction"));
+  // Filtered Calendar for Selected User based on Date Filters
+  const filteredUserCalendar = useMemo(() => {
+    if (!userCalendar || userCalendar.length === 0) return [];
+    const todayStr = getTodayDateString();
+
+    if (userDatePreset === "today") {
+      return userCalendar.filter(c => (c.attendance_date || c.date) === todayStr);
+    }
+    if (userDatePreset === "this_week") {
+      const now = new Date();
+      const firstDayOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+      const firstDayStr = firstDayOfWeek.toISOString().split("T")[0];
+      return userCalendar.filter(c => {
+        const d = c.attendance_date || c.date || "";
+        return d >= firstDayStr && d <= todayStr;
+      });
+    }
+    if (userDatePreset === "this_month") {
+      const ym = todayStr.slice(0, 7);
+      return userCalendar.filter(c => (c.attendance_date || c.date || "").startsWith(ym));
+    }
+    if (userDatePreset === "month" && userSelectedMonth) {
+      return userCalendar.filter(c => (c.attendance_date || c.date || "").startsWith(userSelectedMonth));
+    }
+    if (userDatePreset === "custom") {
+      return userCalendar.filter(c => {
+        const d = c.attendance_date || c.date || "";
+        if (userCustomFrom && d < userCustomFrom) return false;
+        if (userCustomTo && d > userCustomTo) return false;
+        return true;
+      });
+    }
+    return userCalendar;
+  }, [userCalendar, userDatePreset, userSelectedMonth, userCustomFrom, userCustomTo]);
+
+  // Calculate Dynamic Metrics for Selected User from real filtered data
+  const workingDays = filteredUserCalendar.filter(d => !d.is_sunday && d.attendance_status !== "Sunday (Weekend Holiday) 🏖️" && d.day_name !== "Sunday");
+  const presentDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("present") || (d.attendance_status || "").toLowerCase().includes("on time") || (d.attendance_status || "").toLowerCase().includes("completed"));
+  const lateDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("late") || (d.attendance_status || "").toLowerCase().includes("warning") || (d.attendance_status || "").toLowerCase().includes("deduction"));
   const leaveDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("leave"));
   const absentDays = workingDays.filter(d => (d.attendance_status || "").toLowerCase().includes("absent"));
-  const totalSundays = userCalendar.filter(d => d.is_sunday).length;
+  const totalSundays = filteredUserCalendar.filter(d => d.is_sunday || d.day_name === "Sunday" || (d.attendance_status || "").toLowerCase().includes("sunday") || (d.attendance_status || "").toLowerCase().includes("holiday")).length;
 
   const attendanceRate = workingDays.length > 0
-    ? Math.round(((presentDays.length + leaveDays.length) / workingDays.length) * 100)
+    ? Number((((presentDays.length + lateDays.length) / workingDays.length) * 100).toFixed(2))
     : 100;
+
+  // Trigger server-side auto-absent processing
+  const handleRunAutoAbsent = async () => {
+    setRunningAutoAbsent(true);
+    try {
+      const today = getTodayDateString();
+      const result = await triggerDailyAutoAbsentJob(today);
+      if (result.success) {
+        if (result.is_sunday) {
+          showToast("Sunday Holiday 🏖️", "Today is Sunday (Weekend Holiday). No student absences generated.", "info");
+        } else {
+          showToast(
+            "Auto-Absent Processed ⚡",
+            `Audited ${result.active_students || 0} active students. Created ${result.absent_created || 0} missing absent records.`,
+            "success"
+          );
+        }
+        await loadAllAttendanceHubData();
+      } else {
+        showToast("Process Error ⚠️", result.error || "Failed to process auto absences.", "error");
+      }
+    } catch (e) {
+      showToast("Error", "Failed to run auto-absent process.", "error");
+    } finally {
+      setRunningAutoAbsent(false);
+    }
+  };
 
   const handleExportMasterPdf = () => {
     try {
@@ -556,22 +635,29 @@ export default function AdminAttendanceHistoryHub() {
   const handleExportUserCalendarPdf = () => {
     if (!selectedUser) return;
     try {
-      const formattedDays = userCalendar.map(c => ({
-        date: c.attendance_date || c.date || "",
-        dayName: c.day_name || "",
-        status: c.attendance_status || (c.is_sunday ? "Sunday Holiday" : "Absent"),
-        checkIn: c.check_in_time || "—",
-        checkOut: c.check_out_time || "—",
-        hours: c.work_hours || c.total_work_hours || "",
-        notes: c.public_ip || c.notes || "",
-        isWeekend: Boolean(c.is_sunday)
-      }));
+      let periodLabel = "Complete Attendance History";
+      if (userDatePreset === "today") periodLabel = `Today (${getTodayDateString()})`;
+      else if (userDatePreset === "this_week") periodLabel = "This Week";
+      else if (userDatePreset === "this_month") periodLabel = `This Month (${getTodayDateString().slice(0, 7)})`;
+      else if (userDatePreset === "month" && userSelectedMonth) periodLabel = `Month: ${userSelectedMonth}`;
+      else if (userDatePreset === "custom") periodLabel = `${userCustomFrom || 'Earliest'} to ${userCustomTo || 'Latest'}`;
 
-      generatePrintableUserMonthlyAttendancePdf({
-        user: selectedUser,
-        month: `Official Attendance Statement (${getTodayDateString()})`,
-        calendarDays: formattedDays,
-        generatedBy: "Admin Attendance Desk"
+      const summaryData = {
+        total_working_days: workingDays.length,
+        present_days: presentDays.length,
+        absent_days: absentDays.length,
+        late_days: lateDays.length,
+        leave_days: leaveDays.length,
+        holidays: totalSundays,
+        attendance_percentage: attendanceRate
+      };
+
+      generateStudentAttendancePdf({
+        student: selectedUser,
+        period: periodLabel,
+        records: filteredUserCalendar,
+        summary: summaryData,
+        generatedBy: "Admin Attendance Supervisor"
       });
       showToast("PDF Ready 📄", `Attendance statement for ${selectedUser.name} opened.`, "success");
     } catch(e) {
@@ -643,36 +729,49 @@ export default function AdminAttendanceHistoryHub() {
             <span>Master Attendance History & Individual Student Inspector</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Select any student, remote intern, or employee to inspect their full day-by-day attendance history calendar, shift times, Sunday holidays, and leaves.
+            Select any student, remote intern, or employee to inspect their full day-by-day attendance history, apply date filters, and export PDF reports.
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0 self-start">
+        {/* Global Action & Tab Switcher */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <button
             type="button"
-            onClick={() => setActiveTab("individual")}
-            className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "individual"
-                ? "bg-white text-blue-600 shadow-xs"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
+            onClick={handleRunAutoAbsent}
+            disabled={runningAutoAbsent}
+            className="px-3.5 py-2 rounded-2xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-amber-600"
+            title="Trigger scheduled automatic absence processing for active students"
           >
-            <FaUserCheck className="text-xs" />
-            <span>Individual User Calendar 👤</span>
+            <FaBolt className={runningAutoAbsent ? "animate-spin text-xs" : "text-xs"} />
+            <span>{runningAutoAbsent ? "Processing..." : "Run Auto-Absent ⚡"}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("master_table")}
-            className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "master_table"
-                ? "bg-white text-blue-600 shadow-xs"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            <FaFilter className="text-xs" />
-            <span>All Global Logs Table 📋</span>
-          </button>
+
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab("individual")}
+              className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "individual"
+                  ? "bg-white text-blue-600 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <FaUserCheck className="text-xs" />
+              <span>Individual User Calendar 👤</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("master_table")}
+              className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "master_table"
+                  ? "bg-white text-blue-600 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <FaFilter className="text-xs" />
+              <span>All Global Logs Table 📋</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -729,7 +828,7 @@ export default function AdminAttendanceHistoryHub() {
                   type="text"
                   value={userSearchQuery}
                   onChange={(e) => setUserSearchQuery(e.target.value)}
-                  placeholder="Search student or employee name..."
+                  placeholder="Search by name, email, student ID..."
                   className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-blue-600 bg-slate-50/50"
                 />
               </div>
@@ -779,7 +878,7 @@ export default function AdminAttendanceHistoryHub() {
             </div>
           </div>
 
-          {/* RIGHT MAIN PANEL: SELECTED USER FULL CALENDAR & METRICS */}
+          {/* RIGHT MAIN PANEL: SELECTED USER FULL CALENDAR, DATE FILTERS & PDF EXPORT */}
           <div className="lg:col-span-8 space-y-6">
             {selectedUser ? (
               <>
@@ -803,17 +902,17 @@ export default function AdminAttendanceHistoryHub() {
 
                   <div className="flex flex-col sm:items-end gap-2 text-right sm:border-l sm:border-white/10 sm:pl-6">
                     <div>
-                      <p className="text-[11px] text-blue-200 uppercase font-semibold">Working Days Attendance</p>
+                      <p className="text-[11px] text-blue-200 uppercase font-semibold">Attendance Rate (Filtered)</p>
                       <p className="text-3xl font-extrabold text-emerald-400 mt-0.5">{attendanceRate}%</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={handleExportUserCalendarPdf}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-emerald-400/30"
-                        title="Download Statement PDF"
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-xs border border-emerald-400/30"
+                        title="Download Filtered Attendance PDF Report"
                       >
-                        <FaFilePdf className="text-[10px]" />
+                        <FaFilePdf className="text-xs" />
                         <span>Download PDF 📄</span>
                       </button>
                       {isAdmin && (
@@ -830,23 +929,159 @@ export default function AdminAttendanceHistoryHub() {
                   </div>
                 </div>
 
-                {/* Summary Metrics */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                    <span className="text-[10px] font-bold uppercase text-slate-400">Total Presents</span>
-                    <p className="text-xl font-bold text-emerald-600 mt-1">{presentDays.length} Days</p>
+                {/* Date Filter Toolbar for Selected User */}
+                <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      <FaFilter className="text-blue-600" />
+                      <span>Filter Attendance Period</span>
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-semibold">
+                      Showing <strong className="text-blue-600">{filteredUserCalendar.length}</strong> attendance records
+                    </span>
                   </div>
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                    <span className="text-[10px] font-bold uppercase text-slate-400">Late / Deductions</span>
-                    <p className="text-xl font-bold text-amber-600 mt-1">{lateDays.length} Days</p>
+
+                  {/* Preset Buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("all")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "all"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      All Time
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("today")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "today"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("this_week")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "this_week"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      This Week
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("this_month")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "this_month"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      This Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("month")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "month"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      Month Picker
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserDatePreset("custom")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        userDatePreset === "custom"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      Custom Range
+                    </button>
                   </div>
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                    <span className="text-[10px] font-bold uppercase text-slate-400">Approved Leaves</span>
-                    <p className="text-xl font-bold text-blue-600 mt-1">{leaveDays.length} Days</p>
+
+                  {/* Interactive Date Selectors */}
+                  {userDatePreset === "month" && (
+                    <div className="pt-2 flex items-center gap-3">
+                      <label className="text-xs font-bold text-slate-700">Select Month & Year:</label>
+                      <input
+                        type="month"
+                        value={userSelectedMonth}
+                        onChange={(e) => setUserSelectedMonth(e.target.value)}
+                        className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 bg-white"
+                      />
+                    </div>
+                  )}
+
+                  {userDatePreset === "custom" && (
+                    <div className="pt-2 flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-slate-700">From:</label>
+                        <input
+                          type="date"
+                          value={userCustomFrom}
+                          onChange={(e) => setUserCustomFrom(e.target.value)}
+                          className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 bg-white"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-slate-700">To:</label>
+                        <input
+                          type="date"
+                          value={userCustomTo}
+                          onChange={(e) => setUserCustomTo(e.target.value)}
+                          className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 bg-white"
+                        />
+                      </div>
+                      {(userCustomFrom || userCustomTo) && (
+                        <button
+                          type="button"
+                          onClick={() => { setUserCustomFrom(""); setUserCustomTo(""); }}
+                          className="text-xs text-blue-600 hover:underline font-bold cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Summary Metrics Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs text-center">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Working Days</span>
+                    <p className="text-lg font-bold text-slate-900 mt-1">{workingDays.length}</p>
                   </div>
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs text-center">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Presents</span>
+                    <p className="text-lg font-bold text-emerald-600 mt-1">{presentDays.length}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs text-center">
                     <span className="text-[10px] font-bold uppercase text-slate-400">Absents</span>
-                    <p className="text-xl font-bold text-rose-600 mt-1">{absentDays.length} Days</p>
+                    <p className="text-lg font-bold text-rose-600 mt-1">{absentDays.length}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs text-center">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Late</span>
+                    <p className="text-lg font-bold text-amber-600 mt-1">{lateDays.length}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs text-center">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Holidays</span>
+                    <p className="text-lg font-bold text-slate-600 mt-1">{totalSundays}</p>
+                  </div>
+                  <div className="bg-blue-50/50 p-3.5 rounded-2xl border border-blue-200 shadow-xs text-center">
+                    <span className="text-[10px] font-bold uppercase text-blue-600">Rate</span>
+                    <p className="text-lg font-bold text-blue-700 mt-1">{attendanceRate}%</p>
                   </div>
                 </div>
 
@@ -855,18 +1090,18 @@ export default function AdminAttendanceHistoryHub() {
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                       <FaCalendarCheck className="text-blue-600" />
-                      <span>{selectedUser.name}&apos;s Attendance Calendar History</span>
+                      <span>{selectedUser.name}&apos;s Daily Attendance History</span>
                     </h3>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={handleExportUserCalendarPdf}
-                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-1 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
                       >
-                        <FaFilePdf className="text-xs text-emerald-600" /> Download PDF Statement
+                        <FaFilePdf className="text-xs" /> Download PDF
                       </button>
                       <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
-                        {userCalendar.length} Days
+                        {filteredUserCalendar.length} Records
                       </span>
                     </div>
                   </div>
@@ -879,69 +1114,83 @@ export default function AdminAttendanceHistoryHub() {
                           <th className="py-2.5 px-3">Check-In</th>
                           <th className="py-2.5 px-3">Check-Out</th>
                           <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3">Network Status</th>
                           <th className="py-2.5 px-3 text-right">Admin Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {userCalendar.map((rec) => {
-                          const statusStr = (rec.attendance_status || "").toLowerCase();
-                          const isSun = statusStr.includes("sunday");
-                          const isLev = statusStr.includes("leave");
-                          const isAbs = statusStr.includes("absent");
-                          const isLate = statusStr.includes("late") || statusStr.includes("deduction");
-                          const isPresent = statusStr.includes("present") || statusStr.includes("on time") || statusStr.includes("completed");
+                        {filteredUserCalendar.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                              No attendance records found for this period.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredUserCalendar.map((rec) => {
+                            const statusStr = (rec.attendance_status || "").toLowerCase();
+                            const isSun = statusStr.includes("sunday") || rec.day_name === "Sunday" || rec.is_sunday;
+                            const isLev = statusStr.includes("leave");
+                            const isAbs = statusStr.includes("absent");
+                            const isLate = statusStr.includes("late") || statusStr.includes("deduction") || statusStr.includes("warning");
+                            const isPresent = statusStr.includes("present") || statusStr.includes("on time") || statusStr.includes("completed");
 
-                          let badgeColor = "bg-slate-100 text-slate-600 border-slate-200";
-                          if (isSun) badgeColor = "bg-purple-50 text-purple-700 border-purple-200";
-                          else if (isLev) badgeColor = "bg-blue-50 text-blue-700 border-blue-200";
-                          else if (isAbs) badgeColor = "bg-rose-50 text-rose-700 border-rose-200 font-bold";
-                          else if (isLate) badgeColor = "bg-amber-50 text-amber-700 border-amber-200 font-bold";
-                          else if (isPresent) badgeColor = "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold";
+                            let badgeColor = "bg-slate-100 text-slate-600 border-slate-200";
+                            if (isSun) badgeColor = "bg-purple-50 text-purple-700 border-purple-200";
+                            else if (isLev) badgeColor = "bg-blue-50 text-blue-700 border-blue-200";
+                            else if (isAbs) badgeColor = "bg-rose-50 text-rose-700 border-rose-200 font-bold";
+                            else if (isLate) badgeColor = "bg-amber-50 text-amber-700 border-amber-200 font-bold";
+                            else if (isPresent) badgeColor = "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold";
 
-                          return (
-                            <tr key={`cal-row-${rec.attendance_date || rec.date}`} className="hover:bg-slate-50 transition-colors">
-                              <td className="py-2.5 px-3 font-semibold text-slate-900">
-                                <span>{rec.attendance_date || rec.date || "Today"}</span>
-                                {rec.day_name && (
-                                  <span className="text-[11px] text-slate-400 font-normal ml-1.5">
-                                    ({rec.day_name})
+                            const networkDisplay = rec.network_verified || rec.public_ip ? "Office Verified 🟢" : "—";
+
+                            return (
+                              <tr key={`cal-row-${rec.attendance_date || rec.date}`} className="hover:bg-slate-50 transition-colors">
+                                <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                  <span>{rec.attendance_date || rec.date || "Today"}</span>
+                                  {rec.day_name && (
+                                    <span className="text-[11px] text-slate-400 font-normal ml-1.5">
+                                      ({rec.day_name})
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-medium text-emerald-700">
+                                  {rec.check_in_time || "--:--"}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-medium text-rose-700">
+                                  {rec.check_out_time || "--:--"}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className={`px-2.5 py-1 rounded-full text-[10px] border uppercase inline-flex items-center gap-1 ${badgeColor}`}>
+                                    {rec.attendance_status || "Present"}
                                   </span>
-                                )}
-                              </td>
-                              <td className="py-2.5 px-3 font-mono font-medium text-emerald-700">
-                                {rec.check_in_time || "--:--"}
-                              </td>
-                              <td className="py-2.5 px-3 font-mono font-medium text-rose-700">
-                                {rec.check_out_time || "--:--"}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className={`px-2.5 py-1 rounded-full text-[10px] border uppercase inline-flex items-center gap-1 ${badgeColor}`}>
-                                  {rec.attendance_status || "Present"}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditModal({
-                                      isOpen: true,
-                                      record: rec,
-                                      date: rec.attendance_date || rec.date,
-                                      status: rec.attendance_status || "Present (On Time)",
-                                      checkInTime: rec.check_in_time && rec.check_in_time !== "--:--" ? rec.check_in_time : "10:00 AM",
-                                      checkOutTime: rec.check_out_time && rec.check_out_time !== "--:--" && rec.check_out_time !== "Not Checked Out" ? rec.check_out_time : "06:00 PM",
-                                    });
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] border border-blue-200 transition-all cursor-pointer inline-flex items-center gap-1"
-                                  title="Admin Edit Attendance"
-                                >
-                                  <FaEdit className="text-[10px]" />
-                                  <span>Edit</span>
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                                </td>
+                                <td className="py-2.5 px-3 text-[11px] font-medium text-blue-600">
+                                  {networkDisplay}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditModal({
+                                        isOpen: true,
+                                        record: rec,
+                                        date: rec.attendance_date || rec.date,
+                                        status: rec.attendance_status || "Present (On Time)",
+                                        checkInTime: rec.check_in_time && rec.check_in_time !== "--:--" ? rec.check_in_time : "10:00 AM",
+                                        checkOutTime: rec.check_out_time && rec.check_out_time !== "--:--" && rec.check_out_time !== "Not Checked Out" ? rec.check_out_time : "06:00 PM",
+                                      });
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] border border-blue-200 transition-all cursor-pointer inline-flex items-center gap-1"
+                                    title="Admin Edit Attendance"
+                                  >
+                                    <FaEdit className="text-[10px]" />
+                                    <span>Edit</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -956,6 +1205,7 @@ export default function AdminAttendanceHistoryHub() {
           </div>
         </div>
       ) : (
+
         /* MASTER GLOBAL LOGS TABLE */
         <div className="space-y-4">
           {/* Filter Bar */}

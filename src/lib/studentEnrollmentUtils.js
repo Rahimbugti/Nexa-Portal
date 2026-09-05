@@ -458,6 +458,26 @@ export async function registerEmployeeWithCredentials({
     fullName: cleanName,
   }).catch(() => {});
 
+  // If Remote Employee, sync to Supabase remote_users table
+  const isEmpRemote = (employeeData.employment_type || "").toLowerCase().includes("remote") || employeeData.is_remote === true;
+  if (isEmpRemote) {
+    try {
+      await supabase.from("remote_users").upsert([{
+        user_email: cleanEmail,
+        user_name: cleanName,
+        department: employeeData.department || "Engineering",
+        designation: employeeData.designation || "Remote Staff Member",
+        role: "employee",
+        device_name: "Workstation (Remote)",
+        status: "active",
+        is_active: true,
+        added_by_email: "admin@gmail.com",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }], { onConflict: "user_email" });
+    } catch (e) {}
+  }
+
   return {
     employee: employeeProfile,
     authUserId: authUserId,
@@ -555,6 +575,51 @@ export async function registerInternWithCredentials({
     role: "intern",
     fullName: cleanName,
   }).catch(() => {});
+
+  // 2. If Remote Intern, automatically register and persist into Supabase remote_users table
+  if (isRemote) {
+    try {
+      const remoteUserPayload = {
+        user_email: cleanEmail,
+        user_name: cleanName,
+        department: internData.course_name || internData.tech_domain || "Full Stack MERN Web Development",
+        designation: "Remote Intern",
+        role: "intern",
+        device_name: "Workstation (Remote)",
+        status: "active",
+        is_active: true,
+        added_by_email: "admin@gmail.com",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await supabase
+        .from("remote_users")
+        .upsert([remoteUserPayload], { onConflict: "user_email" });
+
+      if (typeof window !== "undefined") {
+        await fetch("/api/remote-users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "add_user",
+            userData: {
+              name: cleanName,
+              email: cleanEmail,
+              department: internData.course_name || internData.tech_domain || "Full Stack MERN Web Development",
+              designation: "Remote Intern",
+              role: "intern",
+              deviceName: "Workstation (Remote)",
+            },
+            requesterEmail: "admin@gmail.com",
+            requesterRole: "admin",
+          }),
+        }).catch(() => {});
+      }
+    } catch (remoteErr) {
+      console.warn("Auto-sync remote_users error:", remoteErr);
+    }
+  }
 
   return {
     intern: createdInternRecord,

@@ -517,22 +517,22 @@ export default function AttendancePage() {
       setIpVerificationResult({
         success: true,
         isRemote: res.isRemote || false,
-        message: res.isRemote ? "Remote Member Mode Active: Wi-Fi Restriction Disabled." : "Office Wi-Fi Verified Successfully.",
+        message: res.message || "Office Wi-Fi Verified Successfully.",
         publicIp: activeIp,
-        officePublicIp: res.activeOfficeNetwork?.public_ip_address || activeIp
+        officePublicIp: res.officePublicIp || activeIp
       });
       if (!silent) {
-        showToast("Office Wi-Fi Verified 🟢", "Network verified successfully. You can mark attendance.", "success");
+        showToast("Office Wi-Fi Verified 🟢", res.message || "Network verified successfully. You can mark attendance.", "success");
       }
     } else {
       setIpVerificationResult({
         success: false,
         message: res.errorMessage || "Network Mismatch! Connect to authorized Office Wi-Fi.",
         publicIp: activeIp,
-        officePublicIp: res.activeOfficeNetwork?.public_ip_address || "Office Wi-Fi"
+        officePublicIp: res.officePublicIp || "Office Wi-Fi"
       });
       if (!silent) {
-        showToast("Network Mismatch 🛑", `Connected IP (${activeIp}) does not match authorized Office Wi-Fi!`, "error");
+        showToast("Network Mismatch 🛑", res.errorMessage || `Connected IP (${activeIp}) does not match authorized Office Wi-Fi!`, "error");
       }
     }
     setIsVerifyingIp(false);
@@ -2077,10 +2077,30 @@ export default function AttendancePage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setOfficeNetworkInfo(prev => ({ ...prev, public_ip_address: customOfficeIp }));
-                  setShowIpManagerModal(false);
-                  showToast("Office IP Saved 🛡️", `Authorized IP set to ${customOfficeIp}`, "success");
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/attendance/office-ip", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        officePublicIp: customOfficeIp,
+                        requesterRole: role || "admin",
+                        requesterEmail: userEmail || "admin@gmail.com"
+                      })
+                    });
+                    const json = await res.json();
+                    if (json.success) {
+                      setOfficeNetworkInfo(prev => ({ ...prev, public_ip_address: customOfficeIp }));
+                      localStorage.setItem("software_house_office_public_ip", customOfficeIp);
+                      setShowIpManagerModal(false);
+                      showToast("Office IP Saved 🛡️", `Authorized IP set to ${customOfficeIp} in Supabase`, "success");
+                      await handleVerifyIpify(true);
+                    } else {
+                      showToast("Error Saving IP 🛑", json.error || "Failed to update IP in database.", "error");
+                    }
+                  } catch (err) {
+                    showToast("Error Saving IP 🛑", err.message, "error");
+                  }
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer"
               >

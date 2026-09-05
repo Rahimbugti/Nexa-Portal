@@ -23,7 +23,8 @@ import {
   FaChevronDown,
   FaChevronRight,
   FaChevronLeft,
-  FaCogs
+  FaCogs,
+  FaTasks
 } from "react-icons/fa";
 
 const adminMenuGroups = [
@@ -32,6 +33,7 @@ const adminMenuGroups = [
     id: "core",
     items: [
       { name: "Overview Dashboard", href: "/dashboard", icon: FaChartPie },
+      { name: "Daily Task Cycles", href: "/dashboard/tasks", icon: FaTasks },
       { name: "Staff Dashboard View", href: "/dashboard/employee", icon: FaUserTie },
       { name: "Employees Directory", href: "/dashboard/employees", icon: FaUsers },
       { name: "Projects Directory", href: "/dashboard/projects", icon: FaProjectDiagram },
@@ -82,8 +84,9 @@ const employeeMenuGroups = [
     id: "staff_core",
     items: [
       { name: "Employee Dashboard", href: "/dashboard/employee", icon: FaUserTie },
+      { name: "Daily Tasks", href: "/dashboard/tasks", icon: FaTasks },
       { name: "My Attendance", href: "/dashboard/attendance", icon: FaCalendarCheck },
-      { name: "My Tasks", href: "/dashboard/projects", icon: FaProjectDiagram },
+      { name: "My Projects", href: "/dashboard/projects", icon: FaProjectDiagram },
       { name: "Remote Work Monitor", href: "/dashboard/remote-monitoring", icon: FaDesktop },
     ]
   },
@@ -106,8 +109,9 @@ const studentMenuGroups = [
     id: "student_core",
     items: [
       { name: "Student Dashboard", href: "/dashboard/student", icon: FaGraduationCap },
+      { name: "Daily Tasks / Assignments", href: "/dashboard/tasks", icon: FaTasks },
       { name: "My Attendance", href: "/dashboard/attendance", icon: FaCalendarCheck },
-      { name: "My Tasks / Assignments", href: "/dashboard/projects", icon: FaProjectDiagram },
+      { name: "My Projects", href: "/dashboard/projects", icon: FaProjectDiagram },
       { name: "My Internships", href: "/dashboard/internships", icon: FaLaptopCode },
     ]
   },

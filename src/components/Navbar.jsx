@@ -93,6 +93,7 @@ export default function Navbar({ onMenuClick, isSidebarOpen = true }) {
   // Admin Notifications Lists
   const [pendingLeaves, setPendingLeaves] = useState([]);
   const [pendingComplaints, setPendingComplaints] = useState([]);
+  const [pendingTaskAlerts, setPendingTaskAlerts] = useState([]);
 
   // Detail Modals for Bell Notifications
   const [selectedLeaveModal, setSelectedLeaveModal] = useState(null);
@@ -434,6 +435,19 @@ export default function Navbar({ onMenuClick, isSidebarOpen = true }) {
         setPendingLeaves(pending);
       }
     } catch (e) {}
+
+    // Fetch Task Notifications (Missed tasks & Submissions)
+    try {
+      const { data: taskNotifs } = await supabase
+        .from("task_notifications")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (Array.isArray(taskNotifs)) {
+        setPendingTaskAlerts(taskNotifs.filter(t => !t.is_read));
+      }
+    } catch (e) {}
   };
 
   const handleApproveLeave = async (leaveId) => {
@@ -608,7 +622,8 @@ export default function Navbar({ onMenuClick, isSidebarOpen = true }) {
 
   const activeComplaints = pendingComplaints.filter(c => !dismissedNotifIds.includes(c.id));
   const activeLeaves = pendingLeaves.filter(l => !dismissedNotifIds.includes(l.id));
-  const totalAdminCount = activeComplaints.length + activeLeaves.length;
+  const activeTaskAlerts = pendingTaskAlerts.filter(t => !dismissedNotifIds.includes(t.id));
+  const totalAdminCount = activeComplaints.length + activeLeaves.length + activeTaskAlerts.length;
   const isAdminRole = role === "admin" || role === "hr" || role === "manager" || role === "accounts";
 
   const handleLogout = async () => {
@@ -769,6 +784,15 @@ export default function Navbar({ onMenuClick, isSidebarOpen = true }) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setActiveNotifCategory("tasks")}
+                  className={`flex-1 py-1 rounded-lg text-center transition-all cursor-pointer ${
+                    activeNotifCategory === "tasks" ? "bg-white text-[#2563EB] shadow-xs" : "text-[#64748B]"
+                  }`}
+                >
+                  Tasks ({activeTaskAlerts.length})
+                </button>
+                <button
+                  type="button"
                   onClick={() => setActiveNotifCategory("leaves")}
                   className={`flex-1 py-1 rounded-lg text-center transition-all cursor-pointer ${
                     activeNotifCategory === "leaves" ? "bg-white text-[#2563EB] shadow-xs" : "text-[#64748B]"
@@ -788,6 +812,47 @@ export default function Navbar({ onMenuClick, isSidebarOpen = true }) {
               </div>
 
               <div className="max-h-80 overflow-y-auto space-y-2.5 pr-1 text-xs">
+                {/* 0. Tasks Section */}
+                {(activeNotifCategory === "all" || activeNotifCategory === "tasks") && activeTaskAlerts.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-3.5 rounded-2xl bg-[#EFF6FF]/60 hover:bg-[#EFF6FF] border border-[#BFDBFE] space-y-2 transition-all shadow-xs relative"
+                  >
+                    <div className="flex items-center justify-between font-bold text-[#0F172A] text-xs">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <FaTasks className="text-[#2563EB] shrink-0 text-xs" />
+                        <span className="truncate text-slate-900 font-bold">{t.title}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDismissNotification(t.id);
+                        }}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                        title="Dismiss notification"
+                      >
+                        <FaTimes className="text-xs" />
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-[#1E3A8A] leading-snug bg-white p-2 rounded-lg border border-[#BFDBFE]/60">
+                      {t.message}
+                    </p>
+
+                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[#BFDBFE]/60">
+                      <span className="text-[#2563EB] font-semibold">{t.related_user_name || t.related_user_email || "System"}</span>
+                      <Link
+                        href="/dashboard/tasks"
+                        onClick={() => setShowNotifications(false)}
+                        className="text-[#2563EB] font-bold hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <span>Open Tasks Hub →</span>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+
                 {/* 1. Leaves Section */}
                 {(activeNotifCategory === "all" || activeNotifCategory === "leaves") && activeLeaves.map((l) => {
                   const applicantName = l.applicant_name || l.employee_name || "Staff / Student";

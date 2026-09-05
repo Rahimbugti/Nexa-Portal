@@ -573,10 +573,16 @@ export default function InternshipsPage() {
       setInterns(currentList);
       setSubmitting(false);
 
-      showToast("Intern Enrolled 🎉", `${form.full_name} enrolled as ${form.internship_mode}. Login account created.`, "success");
+      const isRemoteMode = form.internship_mode.includes("Remote");
+
+      showToast(
+        "Intern Enrolled 🎉",
+        `${form.full_name} enrolled as ${form.internship_mode}.${isRemoteMode ? " Added to Remote Monitoring in Supabase." : " Login account created."}`,
+        "success"
+      );
       showAlert(
         "Intern Account & Credentials Created 🟢",
-        `Intern "${form.full_name}" registered successfully!\n\nTech Domain: ${form.course_name}\nMode: ${form.internship_mode}\nLogin Email: ${form.email}\nAuth Account Created (No plain-text password stored in DB).`,
+        `Intern "${form.full_name}" registered successfully!\n\nTech Domain: ${form.course_name}\nMode: ${form.internship_mode}\nLogin Email: ${form.email}\n${isRemoteMode ? "✅ Automatically registered in Supabase Remote Users & Remote Monitoring table.\n" : ""}Auth Account Created (No plain-text password stored in DB).`,
         "success"
       );
 
