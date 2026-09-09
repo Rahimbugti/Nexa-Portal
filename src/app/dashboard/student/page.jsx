@@ -1231,13 +1231,15 @@ export default function StudentDedicatedDashboardPage() {
       return;
     }
 
+    const isUUID = (val) => typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
     const newRecord = {
       id: `att-${Date.now()}`,
-      student_id: studentPermanentId,
+      student_id: isUUID(studentPermanentId) ? studentPermanentId : null,
       student_name: studentName,
       student_email: studentEmail,
-      employee_id: studentEmail,
-      user_id: studentEmail,
+      employee_id: isUUID(studentEmail) ? studentEmail : null,
+      user_id: isUUID(studentEmail) ? studentEmail : null,
       user_email: studentEmail,
       email: studentEmail,
       user_name: studentName,

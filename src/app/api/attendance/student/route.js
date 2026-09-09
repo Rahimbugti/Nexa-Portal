@@ -444,23 +444,40 @@ export async function POST(request) {
         }
 
         // Build duplicate check filter avoiding invalid uuid queries
-        let existingFilter = `user_email.eq.${studentEmail},student_email.eq.${studentEmail},employee_id.eq.${studentEmail}`;
-        if (permanentStudentId && isValidUUID(permanentStudentId)) {
-          existingFilter = `student_id.eq.${permanentStudentId},${existingFilter}`;
+        let existingFilterParts = [];
+        if (studentEmail) {
+          existingFilterParts.push(`user_email.eq.${studentEmail}`);
+          existingFilterParts.push(`student_email.eq.${studentEmail}`);
         }
+        if (permanentStudentId && isValidUUID(permanentStudentId)) {
+          existingFilterParts.push(`student_id.eq.${permanentStudentId}`);
+        }
+        if (studentIdVal && isValidUUID(studentIdVal)) {
+          existingFilterParts.push(`student_id.eq.${studentIdVal}`);
+          existingFilterParts.push(`employee_id.eq.${studentIdVal}`);
+        }
+        const existingFilter = existingFilterParts.join(",") || `user_email.eq.${studentEmail}`;
 
         // Check for existing attendance record to avoid duplicates
-        const { data: existingRows } = await supabase
-          .from("attendance")
-          .select("id, check_in, check_in_time, created_at")
-          .or(existingFilter)
-          .eq("attendance_date", attDate)
-          .limit(1);
+        let existingRows = [];
+        try {
+          const { data: rows, error: exErr } = await supabase
+            .from("attendance")
+            .select("id, check_in, check_in_time, created_at")
+            .or(existingFilter)
+            .eq("attendance_date", attDate)
+            .limit(1);
+
+          if (!exErr && rows) {
+            existingRows = rows;
+          }
+        } catch (e) {
+          console.warn("Existing check warning:", e);
+        }
 
         const attPayload = {
           student_name: resolvedStudentName,
           student_email: studentEmail,
-          employee_id: studentEmail,
           user_email: studentEmail,
           user_name: resolvedStudentName,
           user_role: "student",
@@ -478,14 +495,20 @@ export async function POST(request) {
           updated_at: new Date().toISOString()
         };
 
-        // Only assign student_id if it's a valid UUID
+        // Only assign ID columns if they are valid UUIDs
         if (permanentStudentId && isValidUUID(permanentStudentId)) {
           attPayload.student_id = permanentStudentId;
+        }
+        if (record.employee_id && isValidUUID(record.employee_id)) {
+          attPayload.employee_id = record.employee_id;
+        }
+        if (record.user_id && isValidUUID(record.user_id)) {
+          attPayload.user_id = record.user_id;
         }
 
         const executeDbOperation = async (operation, payload, targetId = null) => {
           let currentPayload = { ...payload };
-          for (let attempt = 0; attempt < 5; attempt++) {
+          for (let attempt = 0; attempt < 6; attempt++) {
             let res;
             if (operation === "update") {
               res = await supabase.from("attendance").update(currentPayload).eq("id", targetId).select();
@@ -500,20 +523,24 @@ export async function POST(request) {
             const errMsg = res.error.message || "";
             console.warn(`Attendance DB ${operation} attempt ${attempt + 1} notice:`, errMsg);
 
-            // Handle invalid uuid type error
+            // Handle invalid uuid type error across all possible UUID fields
             if (errMsg.toLowerCase().includes("invalid input syntax for type uuid")) {
-              if (currentPayload.student_id && !isValidUUID(currentPayload.student_id)) {
-                delete currentPayload.student_id;
+              let strippedAny = false;
+              for (const key of Object.keys(currentPayload)) {
+                if (key.endsWith("_id") || key === "id") {
+                  if (currentPayload[key] && !isValidUUID(currentPayload[key])) {
+                    delete currentPayload[key];
+                    strippedAny = true;
+                  }
+                }
+              }
+              if (strippedAny) {
                 continue;
               }
-              if (currentPayload.user_id && !isValidUUID(currentPayload.user_id)) {
-                delete currentPayload.user_id;
-                continue;
-              }
-              if (currentPayload.id && !isValidUUID(currentPayload.id)) {
-                delete currentPayload.id;
-                continue;
-              }
+              // If none was obvious non-UUID, strip all _id columns as safeguard
+              if (currentPayload.student_id) { delete currentPayload.student_id; continue; }
+              if (currentPayload.employee_id) { delete currentPayload.employee_id; continue; }
+              if (currentPayload.user_id) { delete currentPayload.user_id; continue; }
             }
 
             // Handle missing column schema cache error: "Could not find the 'column_name' column of 'attendance' in the schema cache"
@@ -595,7 +622,7 @@ export async function POST(request) {
     if (action === "delete") {
       const { id, studentId: deleteStudentId, date: deleteDate } = records || {};
       
-      if (id) {
+      if (id && isValidUUID(id)) {
         const { error } = await supabase.from("attendance").delete().eq("id", id);
         if (!error) {
           return NextResponse.json({ success: true, deleted: true, id });
@@ -603,14 +630,18 @@ export async function POST(request) {
       }
 
       if (deleteStudentId && deleteDate) {
-        let deleteFilter = `user_email.eq.${deleteStudentId},student_email.eq.${deleteStudentId},employee_id.eq.${deleteStudentId}`;
+        let deleteFilterParts = [
+          `user_email.eq.${deleteStudentId}`,
+          `student_email.eq.${deleteStudentId}`
+        ];
         if (isValidUUID(deleteStudentId)) {
-          deleteFilter = `student_id.eq.${deleteStudentId},${deleteFilter}`;
+          deleteFilterParts.push(`student_id.eq.${deleteStudentId}`);
+          deleteFilterParts.push(`employee_id.eq.${deleteStudentId}`);
         }
         const { error } = await supabase
           .from("attendance")
           .delete()
-          .or(deleteFilter)
+          .or(deleteFilterParts.join(","))
           .eq("attendance_date", deleteDate);
 
         if (!error) {
