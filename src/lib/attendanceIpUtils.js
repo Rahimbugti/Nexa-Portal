@@ -7,7 +7,7 @@ export const AUTHORIZED_OFFICE_NETWORK_CONFIG = {
   authorized_ipv4: "192.168.100.144",
   subnet_mask: "255.255.255.0",
   default_gateway: "192.168.100.1",
-  public_ip_address: "39.46.69.123",
+  public_ip_address: "39.46.75.147",
   status: "Active"
 };
 
@@ -187,7 +187,7 @@ export async function verifyOfficeWifiAttendance({ userId, userEmail, userRole, 
         isVerified: false,
         currentPublicIp,
         officePublicIp: authorizedOfficeIp,
-        errorMessage: "Attendance can only be marked while connected to the office network."
+        errorMessage: `Attendance can only be marked while connected to the authorized Office Wi-Fi network.\nAuthorized Office IP: ${authorizedOfficeIp}\nDetected IP: ${currentPublicIp}`
       };
     }
 

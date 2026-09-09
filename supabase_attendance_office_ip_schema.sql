@@ -26,10 +26,10 @@ CREATE POLICY "Public Access system_settings" ON system_settings FOR ALL USING (
 INSERT INTO system_settings (key, value, description)
 VALUES (
     'office_public_ip',
-    '{"ip": "39.46.69.123", "label": "Main Campus Office Wi-Fi", "is_active": true}'::jsonb,
+    '{"ip": "39.46.75.147", "label": "Main Campus Office Wi-Fi", "is_active": true}'::jsonb,
     'Configured Office Public IP for student attendance network verification'
 )
-ON CONFLICT (key) DO NOTHING;
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- 3. ENSURE ATTENDANCE TABLE HAS AUDIT IP COLUMNS
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS public_ip VARCHAR(100);

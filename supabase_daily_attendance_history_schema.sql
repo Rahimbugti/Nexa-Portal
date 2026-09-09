@@ -89,10 +89,10 @@ CREATE TABLE IF NOT EXISTS system_settings (
 INSERT INTO system_settings (key, value, description)
 VALUES (
     'office_public_ip',
-    '{"ip": "39.46.69.123", "label": "Main Campus Office Wi-Fi", "is_active": true}'::jsonb,
+    '{"ip": "39.46.75.147", "label": "Main Campus Office Wi-Fi", "is_active": true}'::jsonb,
     'Configured Office Public IP for student attendance verification'
 )
-ON CONFLICT (key) DO NOTHING;
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- 7. AUTOMATED ABSENT PROCESSING POSTGRES FUNCTION
 CREATE OR REPLACE FUNCTION process_daily_student_absences(target_date DATE DEFAULT CURRENT_DATE)

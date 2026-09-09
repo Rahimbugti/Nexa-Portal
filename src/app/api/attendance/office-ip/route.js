@@ -18,7 +18,7 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 
-const DEFAULT_OFFICE_IP = process.env.OFFICE_PUBLIC_IP || "39.46.69.123";
+const DEFAULT_OFFICE_IP = process.env.OFFICE_PUBLIC_IP || "39.46.75.147";
 
 /**
  * GET /api/attendance/office-ip

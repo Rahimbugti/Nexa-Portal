@@ -334,7 +334,7 @@ export async function POST(request) {
         const isSelfStudentMark = record.is_self_student_clockin || record.user_role === "student" || action === "clock_in" || action === "mark_self";
         
         if (isSelfStudentMark && !isSunday) {
-          let authorizedOfficeIp = process.env.OFFICE_PUBLIC_IP || "39.46.69.123";
+          let authorizedOfficeIp = process.env.OFFICE_PUBLIC_IP || "39.46.75.147";
           try {
             const { data: setting } = await supabase
               .from("system_settings")
@@ -355,7 +355,7 @@ export async function POST(request) {
           if (!isMatch) {
             return NextResponse.json({
               success: false,
-              error: `Attendance can only be marked while connected to the authorized Office Wi-Fi network (${authorizedOfficeIp}). Detected: ${clientProvidedIp || 'Unknown IP'}`
+              error: `Attendance can only be marked while connected to the authorized Office Wi-Fi network.\nAuthorized Office IP: ${authorizedOfficeIp}\nDetected IP: ${clientProvidedIp || 'Unknown IP'}`
             }, { status: 403 });
           }
         }
