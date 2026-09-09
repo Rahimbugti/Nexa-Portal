@@ -25,21 +25,25 @@ export const getAuthorizedOfficeIP = fetchAuthorizedOfficePublicIp;
 
 
 /**
- * Fetches the user's current Public IP strictly using the ipify API
- * Fallback to seeip only if ipify is temporarily unreachable
- * Returns null if internet is disconnected or both fail (Fail-Closed)
+ * Fetches the user's current Public IP dynamically from the network
+ * Uses cache-busting to prevent stale browser socket or HTTP caching.
+ * Returns null if internet is disconnected or detection fails (Fail-Closed).
+ * NEVER returns the authorized office IP as a fallback.
  */
 export async function fetchCurrentPublicIp() {
   if (typeof window !== "undefined" && !window.navigator.onLine) {
     return null;
   }
 
-  // 1. Primary: ipify API
+  const timestamp = Date.now();
+
+  // 1. Primary: ipify IPv4
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch("https://api.ipify.org?format=json", {
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`https://api.ipify.org?format=json&_t=${timestamp}`, {
       cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -53,23 +57,64 @@ export async function fetchCurrentPublicIp() {
     console.debug("ipify fetch notice:", err?.message);
   }
 
-  // 2. Secondary fallback: seeip.org
+  // 2. Secondary: ipify universal IPv4/IPv6
   try {
-    const controller2 = new AbortController();
-    const timeoutId2 = setTimeout(() => controller2.abort(), 4000);
-    const res2 = await fetch("https://api.seeip.org/jsonip", {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`https://api64.ipify.org?format=json&_t=${timestamp}`, {
       cache: "no-store",
-      signal: controller2.signal
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+      signal: controller.signal
     });
-    clearTimeout(timeoutId2);
-    if (res2.ok) {
-      const data2 = await res2.json();
-      if (data2 && data2.ip && typeof data2.ip === "string") {
-        return data2.ip.trim();
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ip && typeof data.ip === "string") {
+        return data.ip.trim();
       }
     }
-  } catch (err2) {
-    console.debug("seeip fetch notice:", err2?.message);
+  } catch (err) {
+    console.debug("api64 fetch notice:", err?.message);
+  }
+
+  // 3. Tertiary: seeip.org
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`https://api.seeip.org/jsonip?_t=${timestamp}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ip && typeof data.ip === "string") {
+        return data.ip.trim();
+      }
+    }
+  } catch (err) {
+    console.debug("seeip fetch notice:", err?.message);
+  }
+
+  // 4. Quaternary: Internal Next.js server-side IP reflector API
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`/api/attendance/client-ip?_t=${timestamp}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.client_ip && typeof data.client_ip === "string" && data.client_ip !== "127.0.0.1") {
+        return data.client_ip.trim();
+      }
+    }
+  } catch (err) {
+    console.debug("client-ip reflector fetch notice:", err?.message);
   }
 
   return null;

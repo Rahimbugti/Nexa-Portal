@@ -6,8 +6,9 @@ import { fetchCurrentPublicIp, fetchAuthorizedOfficePublicIp, DEFAULT_OFFICE_PUB
 
 /**
  * Reusable Network Status Card Component
- * Displays Current Connected Public IP, Authorized Office IP, Match Status, and Attendance Eligibility.
- * Compatible with Student Dashboard and Admin Dashboard.
+ * Dynamically detects the current device's public IP from the live network.
+ * Compares with the fixed Authorized Office IP (39.46.75.147).
+ * Updates automatically on network switch, tab focus, visibility change, and periodic heartbeat.
  */
 export default function NetworkStatusCard({
   onStatusChange = null,
@@ -15,8 +16,8 @@ export default function NetworkStatusCard({
   className = "",
   title = "Office Network Verification"
 }) {
-  const [detectedIp, setDetectedIp] = useState(null);
-  const [authorizedIp, setAuthorizedIp] = useState(DEFAULT_OFFICE_PUBLIC_IP);
+  const [currentPublicIp, setCurrentPublicIp] = useState(null);
+  const [authorizedOfficeIp, setAuthorizedOfficeIp] = useState(DEFAULT_OFFICE_PUBLIC_IP);
   const [isChecking, setIsChecking] = useState(true);
   const [error, setError] = useState(null);
 
@@ -25,41 +26,44 @@ export default function NetworkStatusCard({
     setError(null);
 
     try {
-      const [currentIp, authIp] = await Promise.all([
-        fetchCurrentPublicIp().catch(() => null),
-        fetchAuthorizedOfficePublicIp().catch(() => DEFAULT_OFFICE_PUBLIC_IP)
-      ]);
+      // 1. Fetch live dynamic public IP of this specific device
+      const detectedIp = await fetchCurrentPublicIp();
 
-      const effectiveAuthIp = (authIp || DEFAULT_OFFICE_PUBLIC_IP).trim();
-      setAuthorizedIp(effectiveAuthIp);
-      setDetectedIp(currentIp);
+      // 2. Fetch configured authorized office IP
+      const authIp = await fetchAuthorizedOfficePublicIp().catch(() => DEFAULT_OFFICE_PUBLIC_IP);
+      const cleanAuthIp = (authIp || DEFAULT_OFFICE_PUBLIC_IP).trim();
 
-      const matched = Boolean(
-        currentIp &&
-        effectiveAuthIp &&
-        currentIp.trim().toLowerCase() === effectiveAuthIp.toLowerCase()
+      setAuthorizedOfficeIp(cleanAuthIp);
+      setCurrentPublicIp(detectedIp);
+
+      // Strict match: both must be present and equal
+      const isMatched = Boolean(
+        detectedIp &&
+        cleanAuthIp &&
+        detectedIp.trim().toLowerCase() === cleanAuthIp.toLowerCase()
       );
 
-      if (!currentIp) {
-        setError("Unable to detect public IP address. Please check your internet connection.");
+      if (!detectedIp) {
+        setError("Unable to detect network public IP. Please check your connection.");
       }
 
       if (onStatusChange) {
         onStatusChange({
-          isMatched: matched,
-          detectedIp: currentIp || "Unable to verify",
-          authorizedIp: effectiveAuthIp,
+          isMatched,
+          detectedIp: detectedIp || "Unable to detect",
+          authorizedIp: cleanAuthIp,
           isChecking: false,
-          attendanceAllowed: matched
+          attendanceAllowed: isMatched
         });
       }
     } catch (err) {
       console.error("NetworkStatusCard check error:", err);
-      setError("Failed to verify network connection.");
+      setError("Network verification failed.");
+      setCurrentPublicIp(null);
       if (onStatusChange) {
         onStatusChange({
           isMatched: false,
-          detectedIp: "Error",
+          detectedIp: "Unable to detect",
           authorizedIp: DEFAULT_OFFICE_PUBLIC_IP,
           isChecking: false,
           attendanceAllowed: false
@@ -71,18 +75,46 @@ export default function NetworkStatusCard({
   }, [onStatusChange]);
 
   useEffect(() => {
+    // Initial check
     checkNetwork();
+
+    // Recheck when tab gains focus or visibility changes
+    const handleRecheck = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        checkNetwork();
+      }
+    };
+
+    window.addEventListener("focus", checkNetwork);
+    window.addEventListener("online", checkNetwork);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleRecheck);
+    }
+
+    // Periodic 30s network refresh
+    const intervalId = setInterval(() => {
+      checkNetwork();
+    }, 30000);
+
+    return () => {
+      window.removeEventListener("focus", checkNetwork);
+      window.removeEventListener("online", checkNetwork);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleRecheck);
+      }
+      clearInterval(intervalId);
+    };
   }, [checkNetwork]);
 
   const isMatched = Boolean(
-    detectedIp &&
-    authorizedIp &&
-    detectedIp.trim().toLowerCase() === authorizedIp.trim().toLowerCase()
+    currentPublicIp &&
+    authorizedOfficeIp &&
+    currentPublicIp.trim().toLowerCase() === authorizedOfficeIp.trim().toLowerCase()
   );
 
-  // Status Styling
+  // Status Themes
   let statusTheme = {
-    cardBg: "bg-amber-50/80 border-amber-200 text-amber-900",
+    cardBg: "bg-amber-50/90 border-amber-200 text-amber-900",
     badgeBg: "bg-amber-100 text-amber-800 border-amber-300",
     badgeText: "Checking Network ⏳",
     attendanceText: "Checking...",
@@ -91,7 +123,16 @@ export default function NetworkStatusCard({
   };
 
   if (!isChecking) {
-    if (isMatched) {
+    if (!currentPublicIp) {
+      statusTheme = {
+        cardBg: "bg-rose-50/90 border-rose-200 text-rose-950",
+        badgeBg: "bg-rose-100 text-rose-800 border-rose-300",
+        badgeText: "Network Verification Failed 🛑",
+        attendanceText: "Blocked ❌",
+        attendanceColor: "text-rose-700 font-bold",
+        icon: <FaTimesCircle className="text-rose-600 text-base" />
+      };
+    } else if (isMatched) {
       statusTheme = {
         cardBg: "bg-emerald-50/90 border-emerald-200 text-emerald-950",
         badgeBg: "bg-emerald-100 text-emerald-800 border-emerald-300",
@@ -120,21 +161,21 @@ export default function NetworkStatusCard({
             <FaWifi className="text-[#2563EB]" />
             <span className="font-semibold">IP Check:</span>
             <span className="font-mono font-bold">
-              {isChecking ? "Checking..." : (detectedIp || "Offline")}
+              {isChecking ? "Checking..." : (currentPublicIp || "Unable to detect")}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${statusTheme.badgeBg}`}>
-              {isChecking ? "Checking..." : (isMatched ? "Matched ✅" : "Mismatch ❌")}
+              {isChecking ? "Checking..." : (isMatched ? "Matched ✅" : "Not Matched ❌")}
             </span>
             <button
               type="button"
               onClick={checkNetwork}
               disabled={isChecking}
-              title="Refresh IP Check"
-              className="p-1 rounded-md hover:bg-white/60 transition text-[#64748B] hover:text-[#0F172A]"
+              title="Refresh Network"
+              className="p-1 rounded-md hover:bg-white/60 transition text-[#64748B] hover:text-[#0F172A] cursor-pointer"
             >
-              <FaSyncAlt className={`text-[10px] ${isChecking ? "animate-spin" : ""}`} />
+              <FaSyncAlt className={`text-[10px] ${isChecking ? "animate-spin text-blue-600" : ""}`} />
             </button>
           </div>
         </div>
@@ -170,11 +211,11 @@ export default function NetworkStatusCard({
             type="button"
             onClick={checkNetwork}
             disabled={isChecking}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-[#0F172A] border border-[#E2E8F0] shadow-2xs transition disabled:opacity-50"
-            title="Re-check IP address"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white hover:bg-slate-50 text-[#0F172A] border border-[#E2E8F0] shadow-2xs transition disabled:opacity-50 cursor-pointer active:scale-95"
+            title="Refresh Network IP"
           >
-            <FaSyncAlt className={`text-xs ${isChecking ? "animate-spin text-[#2563EB]" : "text-[#64748B]"}`} />
-            <span className="hidden sm:inline">Refresh</span>
+            <FaSyncAlt className={`text-xs ${isChecking ? "animate-spin text-[#2563EB]" : "text-[#2563EB]"}`} />
+            <span className="font-bold">Refresh Network</span>
           </button>
         </div>
       </div>
@@ -188,9 +229,9 @@ export default function NetworkStatusCard({
           </span>
           <p className="font-mono font-bold text-sm text-[#0F172A]">
             {isChecking ? (
-              <span className="text-amber-600 animate-pulse">Checking network...</span>
+              <span className="text-amber-600 animate-pulse">Checking...</span>
             ) : (
-              detectedIp || <span className="text-rose-600">Unable to verify network</span>
+              currentPublicIp || <span className="text-rose-600">Unable to detect</span>
             )}
           </p>
         </div>
@@ -201,7 +242,7 @@ export default function NetworkStatusCard({
             Authorized Office IP
           </span>
           <p className="font-mono font-bold text-sm text-[#2563EB]">
-            {authorizedIp}
+            {authorizedOfficeIp}
           </p>
         </div>
 
@@ -212,7 +253,11 @@ export default function NetworkStatusCard({
           </span>
           <p className="font-semibold text-sm">
             {isChecking ? (
-              <span className="text-amber-600">Verifying...</span>
+              <span className="text-amber-600">Checking...</span>
+            ) : !currentPublicIp ? (
+              <span className="text-rose-700 font-bold flex items-center gap-1">
+                <FaTimesCircle className="text-rose-600 text-xs" /> Failed
+              </span>
             ) : isMatched ? (
               <span className="text-emerald-700 font-bold flex items-center gap-1">
                 <FaCheckCircle className="text-emerald-600 text-xs" /> Matched
@@ -245,7 +290,7 @@ export default function NetworkStatusCard({
               Attendance cannot be marked from this network.
             </p>
             <p className="text-[11px] text-rose-800 mt-0.5">
-              Please connect to the official office Wi-Fi network (Authorized IP: <strong className="font-mono">{authorizedIp}</strong>). Detected public IP: <strong className="font-mono">{detectedIp || "Unknown"}</strong>.
+              Please connect to the official office Wi-Fi network (Authorized IP: <strong className="font-mono">{authorizedOfficeIp}</strong>). Detected public IP: <strong className="font-mono">{currentPublicIp || "Unable to detect"}</strong>.
             </p>
           </div>
         </div>

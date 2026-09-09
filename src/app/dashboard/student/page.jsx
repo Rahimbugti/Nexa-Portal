@@ -13,7 +13,7 @@ import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import NetworkStatusCard from "@/components/NetworkStatusCard";
 import { calculate30DayFeeCycles } from "@/lib/studentEnrollmentUtils";
 import { isRecordFromToday, getTodayDateString } from "@/lib/attendanceUtils";
-import { fetchCurrentPublicIp } from "@/lib/attendanceIpUtils";
+import { fetchCurrentPublicIp, fetchAuthorizedOfficePublicIp, DEFAULT_OFFICE_PUBLIC_IP } from "@/lib/attendanceIpUtils";
 import { startScreenBroadcast, stopScreenBroadcast, WebRTCViewerClient } from "@/lib/webrtcScreenService";
 import {
   FaGraduationCap,
@@ -1215,8 +1215,21 @@ export default function StudentDedicatedDashboardPage() {
     const studentName = studentInfo.name || localStorage.getItem("current_user_name") || "Student Member";
     const studentPermanentId = studentInfo.id || studentInfo.student_id || studentInfo.enrollmentNo || studentEmail;
 
-    // Detect public IP
-    const currentIp = await fetchCurrentPublicIp().catch(() => null) || "127.0.0.1";
+    // Dynamically detect current public IP
+    const currentIp = await fetchCurrentPublicIp();
+    const authorizedIp = (await fetchAuthorizedOfficePublicIp().catch(() => DEFAULT_OFFICE_PUBLIC_IP) || DEFAULT_OFFICE_PUBLIC_IP).trim();
+
+    if (!currentIp) {
+      showToast("Network Verification Failed 🛑", "Unable to detect your network IP. Connect to office Wi-Fi and try again.", "error");
+      setMarkingAttendance(false);
+      return;
+    }
+
+    if (currentIp.trim().toLowerCase() !== authorizedIp.toLowerCase()) {
+      showToast("Unauthorized Network 🛑", `Attendance cannot be marked from this network.\nConnected IP: ${currentIp}\nAuthorized Office IP: ${authorizedIp}`, "error");
+      setMarkingAttendance(false);
+      return;
+    }
 
     const newRecord = {
       id: `att-${Date.now()}`,
@@ -1238,14 +1251,12 @@ export default function StudentDedicatedDashboardPage() {
       check_out: "Not Checked Out",
       attendance_status: attStatus === "Late" ? "Late (Shift 10:00 AM - 06:00 PM)" : "Present (On Time)",
       status: attStatus,
-      attendance_marked: true,
       attendance_date: todayDateStr,
       date: todayDateStr,
       timestamp: now.toISOString(),
       created_at: now.toISOString(),
       public_ip: currentIp,
-      ip_address: currentIp,
-      network_verified: true
+      ip_address: currentIp
     };
 
     try {
@@ -1254,10 +1265,7 @@ export default function StudentDedicatedDashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "clock_in",
-          records: {
-            ...newRecord,
-            is_self_student_clockin: true
-          }
+          records: newRecord
         })
       });
 
