@@ -603,10 +603,14 @@ export async function POST(request) {
       }
 
       if (deleteStudentId && deleteDate) {
+        let deleteFilter = `user_email.eq.${deleteStudentId},student_email.eq.${deleteStudentId},employee_id.eq.${deleteStudentId}`;
+        if (isValidUUID(deleteStudentId)) {
+          deleteFilter = `student_id.eq.${deleteStudentId},${deleteFilter}`;
+        }
         const { error } = await supabase
           .from("attendance")
           .delete()
-          .or(`student_id.eq.${deleteStudentId},user_email.eq.${deleteStudentId},student_email.eq.${deleteStudentId}`)
+          .or(deleteFilter)
           .eq("attendance_date", deleteDate);
 
         if (!error) {

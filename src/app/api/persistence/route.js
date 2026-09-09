@@ -57,6 +57,11 @@ function convertTo12HourTime(timeStr) {
   return `${String(hours).padStart(2, "0")}:${minutes} ${modifier}`;
 }
 
+function isValidUUID(val) {
+  if (!val || typeof val !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -489,8 +494,12 @@ export async function POST(request) {
         const checkInTime = convertTo24HourTime(record.check_in || record.check_in_time) || "09:00:00";
         const checkOutTime = convertTo24HourTime(record.check_out || record.check_out_time);
 
+        const validStudentUUID = isValidUUID(record.student_id) ? record.student_id : null;
+
         const attPayload = {
-          student_id: studentEmail,
+          student_name: studentName,
+          student_email: studentEmail,
+          employee_id: studentEmail,
           user_email: studentEmail,
           user_name: studentName,
           attendance_date: attDate,
@@ -505,11 +514,20 @@ export async function POST(request) {
           public_ip: record.ip_address || "127.0.0.1"
         };
 
+        if (validStudentUUID) {
+          attPayload.student_id = validStudentUUID;
+        }
+
         // Check for existing record
+        let existingFilter = `user_email.eq.${studentEmail},student_email.eq.${studentEmail}`;
+        if (validStudentUUID) {
+          existingFilter = `student_id.eq.${validStudentUUID},${existingFilter}`;
+        }
+
         const { data: existingRows } = await supabase
           .from("attendance")
           .select("id")
-          .or(`student_id.eq.${studentEmail},user_email.eq.${studentEmail}`)
+          .or(existingFilter)
           .eq("attendance_date", attDate)
           .limit(1);
 
@@ -531,7 +549,7 @@ export async function POST(request) {
             const { data: recentAttendance } = await supabase
               .from("attendance")
               .select("status")
-              .or(`student_id.eq.${studentEmail},user_email.eq.${studentEmail}`)
+              .or(existingFilter)
               .gte("attendance_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
 
             if (recentAttendance && recentAttendance.length > 0) {
