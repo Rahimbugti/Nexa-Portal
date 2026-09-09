@@ -10,6 +10,7 @@ import { enrollStudentWithCredentials, registerEmployeeWithCredentials } from "@
 import FinancialChart from "@/components/FinancialChart";
 import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import AdminRecentSubmissionsWidget from "@/components/AdminRecentSubmissionsWidget";
+import NetworkStatusCard from "@/components/NetworkStatusCard";
 import { getKarachiTodayDateString, getKarachiMinutes } from "@/lib/studentAttendanceUtils";
 import {
   FaUsers,
@@ -355,6 +356,7 @@ export default function DashboardPage() {
           }
           const checkOut = dbTodayRecord.check_out_time || dbTodayRecord.check_out || "Not Checked Out";
           const rawStatus = (dbTodayRecord.attendance_status || dbTodayRecord.status || "Present").toString();
+          const ipAddress = dbTodayRecord.ip_address || dbTodayRecord.public_ip || dbTodayRecord.client_ip || "—";
           
           let formattedStatus = rawStatus;
           const statusLower = rawStatus.toLowerCase();
@@ -369,7 +371,7 @@ export default function DashboardPage() {
           } else if (statusLower.includes("leave")) {
             formattedStatus = `On Leave 🌴`;
           }
-          return { checkIn, checkOut, status: formattedStatus };
+          return { checkIn, checkOut, status: formattedStatus, ipAddress };
         }
 
         // 2. Direct user local storage log
@@ -384,7 +386,8 @@ export default function DashboardPage() {
           const checkIn = todayUserLog.check_in_time || todayUserLog.check_in || "--:--";
           const checkOut = todayUserLog.check_out_time || todayUserLog.check_out || "Not Checked Out";
           const rawStatus = todayUserLog.attendance_status || todayUserLog.status || "Present (On Time) 🟢";
-          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
+          const ipAddress = todayUserLog.ip_address || todayUserLog.public_ip || "—";
+          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢`, ipAddress };
         }
 
         // 3. Master logs cache
@@ -398,7 +401,8 @@ export default function DashboardPage() {
           const checkIn = todayMasterLog.check_in_time || todayMasterLog.check_in || "--:--";
           const checkOut = todayMasterLog.check_out_time || todayMasterLog.check_out || "Not Checked Out";
           const rawStatus = todayMasterLog.attendance_status || todayMasterLog.status || "Present (On Time) 🟢";
-          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
+          const ipAddress = todayMasterLog.ip_address || todayMasterLog.public_ip || "—";
+          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢`, ipAddress };
         }
 
         // 4. Check Leaves (Approved or Pending)
@@ -410,24 +414,24 @@ export default function DashboardPage() {
         });
 
         if (userLeave) {
-          return { checkIn: "--:--", checkOut: "--:--", status: `On Leave (${userLeave.leave_type || "Casual"}) 🌴` };
+          return { checkIn: "--:--", checkOut: "--:--", status: `On Leave (${userLeave.leave_type || "Casual"}) 🌴`, ipAddress: "—" };
         }
 
         // 5. If user enrolled/registered TODAY and hasn't clocked in yet
         const joinDate = (item?.start_date || item?.created_at || item?.joining_date || "").slice(0, 10);
         if (joinDate === todayStr) {
-          return { checkIn: "--:--", checkOut: "--:--", status: "Enrolled Today (Pending Clock-In) ⏳" };
+          return { checkIn: "--:--", checkOut: "--:--", status: "Enrolled Today (Pending Clock-In) ⏳", ipAddress: "—" };
         }
 
         // 6. If shift is currently active (between 10:00 AM and 06:00 PM) and candidate not checked in yet
         if (currentMins >= 600 && currentMins < 1080) {
-          return { checkIn: "--:--", checkOut: "--:--", status: "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠" };
+          return { checkIn: "--:--", checkOut: "--:--", status: "Not Checked In Yet (Shift 10:00 AM - 06:00 PM) 🟠", ipAddress: "—" };
         } else if (currentMins < 600) {
-          return { checkIn: "--:--", checkOut: "--:--", status: "Shift Starts 10:00 AM ⏳" };
+          return { checkIn: "--:--", checkOut: "--:--", status: "Shift Starts 10:00 AM ⏳", ipAddress: "—" };
         }
 
         // 7. Otherwise after 06:00 PM default to Absent Today
-        return { checkIn: "--:--", checkOut: "--:--", status: "Absent Today 🔴" };
+        return { checkIn: "--:--", checkOut: "--:--", status: "Absent Today 🔴", ipAddress: "—" };
       };
 
       const combinedMap = new Map();
@@ -448,6 +452,7 @@ export default function DashboardPage() {
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
+          ipAddress: attInfo.ipAddress || "—",
           progress: "Assigned Software House Deliverables",
           dailyTask: "Logged daily work progress on assigned task.",
           feeStatus: "N/A (Paid Staff)",
@@ -477,6 +482,7 @@ export default function DashboardPage() {
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
+          ipAddress: attInfo.ipAddress || "—",
           progress: `${s.progress !== undefined ? s.progress : 0}% Course Completed`,
           dailyTask: "Submitted daily practical coding lab assignment.",
           feeStatus: s.fee_status || "Paid",
@@ -505,6 +511,7 @@ export default function DashboardPage() {
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
+          ipAddress: attInfo.ipAddress || "—",
           progress: `${i.progress !== undefined ? i.progress : 0}% Internship Milestone Completed`,
           dailyTask: i.task_logs?.[0]?.details || "Working on assigned project module.",
           feeStatus: "Free Internship",
@@ -552,6 +559,7 @@ export default function DashboardPage() {
           checkIn: attInfo.checkIn,
           checkOut: attInfo.checkOut,
           attendance: attInfo.status,
+          ipAddress: attInfo.ipAddress || "—",
           progress: "Active Member",
           dailyTask: "Logged in to Nexa Portal workspace.",
           feeStatus: uRole.includes("student") ? "Paid" : "N/A",
@@ -947,7 +955,10 @@ export default function DashboardPage() {
         categoryData={stats.categoryBreakdown}
       />
 
-      {/* 4. ENTERPRISE MEMBERS DIRECTORY TABLE */}
+      {/* 4. NETWORK & OFFICE WI-FI VERIFICATION STATUS (FOR ADMIN INSPECTION) */}
+      <NetworkStatusCard title="Admin Network & Office Wi-Fi Verification" className="mb-2" />
+
+      {/* 5. ENTERPRISE MEMBERS DIRECTORY TABLE */}
       <div className="bg-white rounded-2xl p-6 border border-[#E2E8F0] shadow-sm space-y-4">
         {/* Table Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8F0] pb-4">
@@ -1011,6 +1022,7 @@ export default function DashboardPage() {
                 <th className="py-3 px-4">Role / Category</th>
                 <th className="py-3 px-4">Check-In</th>
                 <th className="py-3 px-4">Check-Out</th>
+                <th className="py-3 px-4">Attendance IP</th>
                 <th className="py-3 px-4">Today's Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -1018,7 +1030,7 @@ export default function DashboardPage() {
             <tbody className="divide-y divide-[#E2E8F0] font-normal">
               {filteredMembersList.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-[#64748B] italic">
+                  <td colSpan={7} className="py-10 text-center text-[#64748B] italic">
                     No registered members matching criteria.
                   </td>
                 </tr>
@@ -1051,6 +1063,10 @@ export default function DashboardPage() {
 
                     <td className="py-3.5 px-4 font-mono text-xs text-slate-600 whitespace-nowrap">
                       {m.checkOut || "--:--"}
+                    </td>
+
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-[#2563EB] whitespace-nowrap">
+                      {m.ipAddress || "—"}
                     </td>
 
                     <td className="py-3.5 px-4">

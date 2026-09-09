@@ -10,6 +10,7 @@ import { generatePrintable3MonthStudentCertificatePdf } from "@/lib/generate3Mon
 import { generatePrintableInternshipExperienceCertificatePdf } from "@/lib/generateInternshipExperienceCertificatePdf";
 import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
 import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
+import NetworkStatusCard from "@/components/NetworkStatusCard";
 import { calculate30DayFeeCycles } from "@/lib/studentEnrollmentUtils";
 import { isRecordFromToday, getTodayDateString } from "@/lib/attendanceUtils";
 import { fetchCurrentPublicIp } from "@/lib/attendanceIpUtils";
@@ -301,6 +302,13 @@ export default function StudentDedicatedDashboardPage() {
   const [todayAttendance, setTodayAttendance] = useState(null);
   const [studentAttendanceHistory, setStudentAttendanceHistory] = useState([]);
   const [markingAttendance, setMarkingAttendance] = useState(false);
+  const [networkStatus, setNetworkStatus] = useState({
+    isMatched: false,
+    detectedIp: null,
+    authorizedIp: "39.46.75.147",
+    isChecking: true,
+    attendanceAllowed: false
+  });
 
   // Admin-Only Attendance Edit State
   const [editAttendanceModal, setEditAttendanceModal] = useState({
@@ -2014,6 +2022,9 @@ export default function StudentDedicatedDashboardPage() {
             </span>
           </div>
 
+          {/* Network Status Card */}
+          <NetworkStatusCard onStatusChange={setNetworkStatus} />
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
               <span className="text-[10px] font-semibold text-slate-500 uppercase">Check-In Time</span>
@@ -2039,15 +2050,30 @@ export default function StudentDedicatedDashboardPage() {
             <button
               type="button"
               onClick={handleStudentCheckIn}
-              disabled={markingAttendance || Boolean(todayAttendance?.check_in_time)}
+              disabled={
+                markingAttendance || 
+                Boolean(todayAttendance?.check_in_time && todayAttendance?.check_in_time !== "--:--") || 
+                !networkStatus.isMatched || 
+                networkStatus.isChecking
+              }
               className={`py-3 rounded-xl font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer ${
-                todayAttendance?.check_in_time
+                todayAttendance?.check_in_time && todayAttendance?.check_in_time !== "--:--"
                   ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                  : !networkStatus.isMatched || networkStatus.isChecking
+                  ? "bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed"
                   : "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
               }`}
             >
               <FaUserCheck />
-              <span>{todayAttendance?.check_in_time ? "Checked In 🟢" : "Check In"}</span>
+              <span>
+                {todayAttendance?.check_in_time && todayAttendance?.check_in_time !== "--:--"
+                  ? "Checked In 🟢"
+                  : networkStatus.isChecking
+                  ? "Checking Network... ⏳"
+                  : !networkStatus.isMatched
+                  ? "Unauthorized IP 🛑"
+                  : "Check In 🟢"}
+              </span>
             </button>
 
             <button

@@ -334,7 +334,8 @@ export async function POST(request) {
         const isSelfStudentMark = record.is_self_student_clockin || record.user_role === "student" || action === "clock_in" || action === "mark_self";
         
         if (isSelfStudentMark && !isSunday) {
-          let authorizedOfficeIp = process.env.OFFICE_PUBLIC_IP || "39.46.75.147";
+          const defaultIp = process.env.OFFICE_PUBLIC_IP || "39.46.75.147";
+          let authorizedOfficeIp = defaultIp;
           try {
             const { data: setting } = await supabase
               .from("system_settings")
@@ -350,6 +351,20 @@ export async function POST(request) {
               }
             }
           } catch (e) {}
+
+          // Auto-migrate legacy IP in database if present
+          if (authorizedOfficeIp === "39.46.69.123" || !authorizedOfficeIp) {
+            authorizedOfficeIp = defaultIp;
+            try {
+              await supabase
+                .from("system_settings")
+                .upsert({
+                  key: "office_public_ip",
+                  value: { ip: defaultIp, label: "Main Campus Office Wi-Fi", is_active: true },
+                  description: "Configured Office Public IP for student attendance verification"
+                });
+            } catch (e) {}
+          }
 
           const isMatch = clientProvidedIp && clientProvidedIp.toLowerCase() === authorizedOfficeIp.toLowerCase();
           if (!isMatch) {

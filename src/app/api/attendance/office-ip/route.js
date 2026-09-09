@@ -47,6 +47,20 @@ export async function GET(request) {
       }
     }
 
+    // Auto-migrate legacy IP in database to current active IP
+    if (officeIp === "39.46.69.123" || !officeIp) {
+      officeIp = DEFAULT_OFFICE_IP;
+      try {
+        await supabase
+          .from("system_settings")
+          .upsert({
+            key: "office_public_ip",
+            value: { ip: DEFAULT_OFFICE_IP, label: label, is_active: true },
+            description: "Configured Office Public IP for student attendance verification"
+          });
+      } catch (e) {}
+    }
+
     return NextResponse.json({
       success: true,
       office_public_ip: officeIp,

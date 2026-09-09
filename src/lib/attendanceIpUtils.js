@@ -1,19 +1,27 @@
 // Office Authorized Networks & Public IP Verification Engine (via ipify API)
 // Enterprise Security Standard for Student Attendance
 
+export const DEFAULT_OFFICE_PUBLIC_IP = 
+  process.env.NEXT_PUBLIC_OFFICE_IP || 
+  process.env.OFFICE_PUBLIC_IP || 
+  "39.46.75.147";
+
 export const AUTHORIZED_OFFICE_NETWORK_CONFIG = {
   office_name: "Software House Main Office Wi-Fi",
   wifi_name: "Campus High-Speed Office Wi-Fi",
   authorized_ipv4: "192.168.100.144",
   subnet_mask: "255.255.255.0",
   default_gateway: "192.168.100.1",
-  public_ip_address: "39.46.75.147",
+  public_ip_address: DEFAULT_OFFICE_PUBLIC_IP,
   status: "Active"
 };
 
 export function getActiveOfficeNetworks() {
   return [AUTHORIZED_OFFICE_NETWORK_CONFIG];
 }
+
+export const getCurrentPublicIP = fetchCurrentPublicIp;
+export const getAuthorizedOfficeIP = fetchAuthorizedOfficePublicIp;
 
 
 /**
@@ -85,7 +93,7 @@ export async function fetchAuthorizedOfficePublicIp() {
 
   try {
     const saved = localStorage.getItem("software_house_office_public_ip");
-    if (saved) return saved.trim();
+    if (saved && saved.trim() !== "39.46.69.123") return saved.trim();
   } catch (e) {}
 
   return AUTHORIZED_OFFICE_NETWORK_CONFIG.public_ip_address.trim();

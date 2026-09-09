@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { dbFetch, dbSaveRecord, dbDeleteRecord } from "@/lib/dbPersistence";
 import Modal from "@/components/Modal";
 import { showToast } from "@/components/Toast";
+import NetworkStatusCard from "@/components/NetworkStatusCard";
 import { getCurrentMinutes, determineAttendanceState, isRecordFromToday, getTodayDateString, getEmployeeCheckInStatus, timeToMinutes, minutesToTime } from "@/lib/attendanceUtils";
 import { fetchAttendancePolicy, updateAttendancePolicy } from "@/lib/attendancePolicyUtils";
 import { fetchCurrentPublicIp, verifyOfficeWifiAttendance, getActiveOfficeNetworks } from "@/lib/attendanceIpUtils";
@@ -980,6 +981,9 @@ export default function AttendancePage() {
           <p className="text-[11px] font-semibold text-[#64748B]">Shift: 10:00 AM – 6:00 PM</p>
         </div>
       </div>
+
+      {/* Network / Office Wi-Fi Status Card */}
+      <NetworkStatusCard title="Connected Network & Office Wi-Fi Verification" className="mb-4" />
 
       {/* 1. ADMIN VIEW: BALANCED FULL-WIDTH LAYOUT (NO EMPTY SPACE GAP) */}
       {currentRole === "admin" ? (
