@@ -168,13 +168,19 @@ export async function POST(request) {
     const insertedAbsentRecords = [];
     let lastError = null;
 
+// Check if string is a valid UUID
+function isValidUUID(val) {
+  if (!val || typeof val !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
     for (const student of missingStudents) {
       const studentEmail = (student.email || "").toLowerCase().trim();
       const studentName = student.full_name || student.student_name || (studentEmail.includes("@") ? studentEmail.split("@")[0] : "Student");
-      const studentIdVal = student.enrollment_no || student.id || studentEmail;
+      const validStudentUUID = isValidUUID(student.id) ? student.id : null;
 
       const absentPayload = {
-        student_id: studentIdVal,
+        student_id: validStudentUUID,
         student_name: studentName,
         student_email: studentEmail,
         employee_id: studentEmail,
@@ -204,7 +210,7 @@ export async function POST(request) {
       if (!insertError && inserted && inserted.length > 0) {
         insertedAbsentRecords.push(inserted[0]);
         recordedIdentifierSet.add(studentEmail);
-        recordedIdentifierSet.add(studentIdVal.toLowerCase());
+        if (validStudentUUID) recordedIdentifierSet.add(validStudentUUID.toLowerCase());
       } else if (insertError) {
         lastError = insertError.message;
         console.error("Auto absent insert error for", studentEmail, insertError);

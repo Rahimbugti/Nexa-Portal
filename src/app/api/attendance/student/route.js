@@ -60,6 +60,12 @@ function getKarachiTime(d = new Date()) {
   }
 }
 
+// Check if string is a valid UUID
+function isValidUUID(val) {
+  if (!val || typeof val !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
 // Convert time strings to 24-hour format (HH:MM:SS) for database storage
 function convertTo24HourTime(timeStr) {
   if (!timeStr || timeStr === "--:--" || String(timeStr).includes("Not Checked Out")) return null;
@@ -168,7 +174,11 @@ export async function GET(request) {
 
     if (studentId) {
       const cleanId = studentId.toLowerCase().trim();
-      query = query.or(`user_email.ilike.%${cleanId}%,student_email.ilike.%${cleanId}%,student_id.ilike.%${cleanId}%,employee_id.ilike.%${cleanId}%`);
+      if (isValidUUID(cleanId)) {
+        query = query.or(`student_id.eq.${cleanId},user_email.ilike.%${cleanId}%,student_email.ilike.%${cleanId}%,employee_id.ilike.%${cleanId}%`);
+      } else {
+        query = query.or(`user_email.ilike.%${cleanId}%,student_email.ilike.%${cleanId}%,employee_id.ilike.%${cleanId}%`);
+      }
     }
 
     const { data, error } = await query;
@@ -408,8 +418,12 @@ export async function POST(request) {
           : (attendanceStatus === "Present" || attendanceStatus === "Late");
 
         // 1. Resolve permanent student ID and details from Supabase 'students' table
-        let permanentStudentId = studentIdVal;
+        let permanentStudentId = null;
         let resolvedStudentName = studentName;
+        if (isValidUUID(studentIdVal)) {
+          permanentStudentId = studentIdVal;
+        }
+
         if (studentEmail) {
           try {
             const { data: matchedStudent } = await supabase
@@ -419,7 +433,9 @@ export async function POST(request) {
               .maybeSingle();
 
             if (matchedStudent) {
-              permanentStudentId = matchedStudent.id || studentIdVal;
+              if (isValidUUID(matchedStudent.id)) {
+                permanentStudentId = matchedStudent.id;
+              }
               if (!resolvedStudentName || resolvedStudentName === "Student" || resolvedStudentName === "Student Member") {
                 resolvedStudentName = matchedStudent.full_name || resolvedStudentName;
               }
@@ -427,16 +443,21 @@ export async function POST(request) {
           } catch (e) {}
         }
 
+        // Build duplicate check filter avoiding invalid uuid queries
+        let existingFilter = `user_email.eq.${studentEmail},student_email.eq.${studentEmail},employee_id.eq.${studentEmail}`;
+        if (permanentStudentId && isValidUUID(permanentStudentId)) {
+          existingFilter = `student_id.eq.${permanentStudentId},${existingFilter}`;
+        }
+
         // Check for existing attendance record to avoid duplicates
         const { data: existingRows } = await supabase
           .from("attendance")
           .select("id, check_in, check_in_time, created_at")
-          .or(`student_id.eq.${permanentStudentId},user_email.eq.${studentEmail},student_email.eq.${studentEmail},employee_id.eq.${studentEmail}`)
+          .or(existingFilter)
           .eq("attendance_date", attDate)
           .limit(1);
 
         const attPayload = {
-          student_id: permanentStudentId,
           student_name: resolvedStudentName,
           student_email: studentEmail,
           employee_id: studentEmail,
@@ -457,6 +478,11 @@ export async function POST(request) {
           updated_at: new Date().toISOString()
         };
 
+        // Only assign student_id if it's a valid UUID
+        if (permanentStudentId && isValidUUID(permanentStudentId)) {
+          attPayload.student_id = permanentStudentId;
+        }
+
         const executeDbOperation = async (operation, payload, targetId = null) => {
           let currentPayload = { ...payload };
           for (let attempt = 0; attempt < 5; attempt++) {
@@ -473,6 +499,22 @@ export async function POST(request) {
 
             const errMsg = res.error.message || "";
             console.warn(`Attendance DB ${operation} attempt ${attempt + 1} notice:`, errMsg);
+
+            // Handle invalid uuid type error
+            if (errMsg.toLowerCase().includes("invalid input syntax for type uuid")) {
+              if (currentPayload.student_id && !isValidUUID(currentPayload.student_id)) {
+                delete currentPayload.student_id;
+                continue;
+              }
+              if (currentPayload.user_id && !isValidUUID(currentPayload.user_id)) {
+                delete currentPayload.user_id;
+                continue;
+              }
+              if (currentPayload.id && !isValidUUID(currentPayload.id)) {
+                delete currentPayload.id;
+                continue;
+              }
+            }
 
             // Handle missing column schema cache error: "Could not find the 'column_name' column of 'attendance' in the schema cache"
             const match = errMsg.match(/Could not find the '([^']+)' column/i);
@@ -509,10 +551,15 @@ export async function POST(request) {
         // Synchronize updated attendance rate to students table
         if (studentEmail) {
           try {
+            let rateFilter = `user_email.eq.${studentEmail},student_email.eq.${studentEmail}`;
+            if (studentIdVal && isValidUUID(studentIdVal)) {
+              rateFilter = `student_id.eq.${studentIdVal},${rateFilter}`;
+            }
+
             const { data: studentRecords } = await supabase
               .from("attendance")
               .select("status, attendance_date")
-              .or(`student_id.eq.${studentIdVal},user_email.eq.${studentEmail},student_email.eq.${studentEmail}`)
+              .or(rateFilter)
               .gte("attendance_date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
 
             if (studentRecords && studentRecords.length > 0) {
