@@ -1,15 +1,80 @@
 /**
  * Student Attendance Utility Functions
  * Provides utility functions for student attendance management
+ * Timezone: Asia/Karachi (PKT, UTC+5)
  */
-
-// Use API route instead of direct Supabase access for client-side utilities
 
 /**
- * Get today's date string in YYYY-MM-DD format
+ * Get today's date string in Asia/Karachi timezone (YYYY-MM-DD)
+ */
+export function getKarachiTodayDateString(d = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Karachi",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(d);
+  } catch (e) {
+    return new Date().toISOString().split("T")[0];
+  }
+}
+
+/**
+ * Alias for today's date string
  */
 export function getTodayDateString() {
-  return new Date().toISOString().split("T")[0];
+  return getKarachiTodayDateString();
+}
+
+/**
+ * Get current time string in Asia/Karachi timezone (HH:MM AM/PM)
+ */
+export function getKarachiTimeString(d = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Karachi",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    }).format(d);
+  } catch (e) {
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+}
+
+/**
+ * Get current minutes from midnight in Asia/Karachi timezone
+ */
+export function getKarachiMinutes(d = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Karachi",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: false
+    }).formatToParts(d);
+    const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+    const minute = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
+    return hour * 60 + minute;
+  } catch (e) {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  }
+}
+
+/**
+ * Check if a date string or Date object is a Sunday
+ */
+export function isSundayDate(dateInput) {
+  if (!dateInput) return false;
+  if (typeof dateInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    const [y, m, d] = dateInput.split("-").map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    return dateObj.getDay() === 0;
+  }
+  const dateObj = new Date(dateInput);
+  return dateObj.getDay() === 0;
 }
 
 /**
@@ -19,18 +84,21 @@ export function getAttendanceStatusColor(status) {
   const statusLower = (status || "").toLowerCase();
   
   if (statusLower.includes("present") || statusLower.includes("on time")) {
-    return "bg-green-100 text-green-800 border-green-200";
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
   }
   if (statusLower.includes("absent")) {
-    return "bg-red-100 text-red-800 border-red-200";
+    return "bg-rose-50 text-rose-700 border-rose-200";
   }
   if (statusLower.includes("late")) {
-    return "bg-yellow-100 text-yellow-800 border-yellow-200";
+    return "bg-amber-50 text-amber-700 border-amber-200";
   }
   if (statusLower.includes("leave")) {
-    return "bg-blue-100 text-blue-800 border-blue-200";
+    return "bg-blue-50 text-blue-700 border-blue-200";
   }
-  return "bg-gray-100 text-gray-800 border-gray-200";
+  if (statusLower.includes("holiday") || statusLower.includes("sunday")) {
+    return "bg-purple-50 text-purple-700 border-purple-200";
+  }
+  return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
 /**
@@ -51,7 +119,70 @@ export function getAttendanceStatusIcon(status) {
   if (statusLower.includes("leave")) {
     return "leave";
   }
+  if (statusLower.includes("holiday") || statusLower.includes("sunday")) {
+    return "holiday";
+  }
   return "unknown";
+}
+
+/**
+ * Calculate comprehensive attendance summary for student records
+ * @param {Array} attendanceRecords - Array of attendance records
+ * @returns {Object} { totalWorkingDays, presentDays, lateDays, absentDays, holidays, attendancePercentage }
+ */
+export function calculateAttendanceMetrics(attendanceRecords = []) {
+  if (!attendanceRecords || attendanceRecords.length === 0) {
+    return {
+      totalWorkingDays: 0,
+      presentDays: 0,
+      lateDays: 0,
+      absentDays: 0,
+      leaveDays: 0,
+      holidays: 0,
+      attendancePercentage: 100
+    };
+  }
+
+  let presentDays = 0;
+  let lateDays = 0;
+  let absentDays = 0;
+  let leaveDays = 0;
+  let holidays = 0;
+  let totalWorkingDays = 0;
+
+  attendanceRecords.forEach(record => {
+    const status = (record.status || record.attendance_status || "").toLowerCase();
+    const isSun = record.day_name === "Sunday" || record.is_sunday || isSundayDate(record.attendance_date || record.date);
+
+    if (status.includes("holiday") || isSun) {
+      holidays++;
+    } else {
+      totalWorkingDays++;
+      if (status.includes("absent")) {
+        absentDays++;
+      } else if (status.includes("late")) {
+        lateDays++;
+      } else if (status.includes("leave")) {
+        leaveDays++;
+      } else {
+        presentDays++;
+      }
+    }
+  });
+
+  const attendancePercentage = totalWorkingDays > 0
+    ? Number((((presentDays + lateDays) / totalWorkingDays) * 100).toFixed(2))
+    : 100;
+
+  return {
+    totalWorkingDays,
+    presentDays,
+    lateDays,
+    absentDays,
+    leaveDays,
+    holidays,
+    attendancePercentage
+  };
 }
 
 /**
@@ -60,18 +191,8 @@ export function getAttendanceStatusIcon(status) {
  * @returns {number} Attendance percentage (0-100)
  */
 export function calculateAttendancePercentage(attendanceRecords) {
-  if (!attendanceRecords || attendanceRecords.length === 0) {
-    return 100;
-  }
-
-  const presentCount = attendanceRecords.filter(record => {
-    const status = (record.status || record.attendance_status || "").toLowerCase();
-    return status.includes("present") || 
-           status.includes("on time") || 
-           status.includes("leave");
-  }).length;
-
-  return Math.round((presentCount / attendanceRecords.length) * 100);
+  const metrics = calculateAttendanceMetrics(attendanceRecords);
+  return metrics.attendancePercentage;
 }
 
 /**
@@ -104,21 +225,18 @@ export async function getStudentAttendanceByDate(date) {
 }
 
 /**
- * Mark attendance for a student
+ * Mark attendance for a student (Manual clock-in / Admin mark)
  * @param {Object} params - Attendance data
- * @param {string} params.studentId - Student email/ID
- * @param {string} params.studentName - Student name
- * @param {string} params.date - Date in YYYY-MM-DD format
- * @param {string} params.status - Attendance status (Present/Absent/Late/Leave)
- * @param {string} params.ipAddress - IP address (optional)
- * @returns {Object} API response
  */
 export async function markStudentAttendance({
   studentId,
   studentName,
-  date,
+  studentEmail,
+  date = getKarachiTodayDateString(),
   status = "Present",
-  ipAddress = "127.0.0.1"
+  checkInTime = getKarachiTimeString(),
+  ipAddress = "127.0.0.1",
+  attendanceMarked = true
 }) {
   try {
     const response = await fetch("/api/attendance/student", {
@@ -129,11 +247,19 @@ export async function markStudentAttendance({
       body: JSON.stringify({
         action: "save",
         records: {
-          student_id: studentId,
+          student_id: studentId || studentEmail,
           student_name: studentName,
+          student_email: studentEmail || studentId,
+          user_email: studentEmail || studentId,
           date: date,
+          attendance_date: date,
           status: status,
-          ip_address: ipAddress
+          attendance_status: status,
+          check_in: checkInTime,
+          check_in_time: checkInTime,
+          ip_address: ipAddress,
+          public_ip: ipAddress,
+          attendance_marked: attendanceMarked
         }
       })
     });
@@ -181,41 +307,23 @@ export async function getStudentAttendanceSummary(studentId, days = 30) {
   try {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split("T")[0];
+    const startDateStr = getKarachiTodayDateString(startDate);
     
-    const response = await fetch(`/api/attendance/student?date=${startDateStr}`);
+    const response = await fetch(`/api/attendance/student?studentId=${encodeURIComponent(studentId)}&from=${startDateStr}`);
     const result = await response.json();
-    const allRecords = result?.data || [];
+    const records = result?.data || [];
     
-    // Filter for this student
-    const studentRecords = allRecords.filter(
-      r => (r.student_id || r.user_email || r.user_id || "").toLowerCase() === studentId.toLowerCase()
-    );
-
-    const summary = {
-      totalDays: studentRecords.length,
-      present: 0,
-      absent: 0,
-      late: 0,
-      leave: 0
+    const metrics = calculateAttendanceMetrics(records);
+    return {
+      totalDays: records.length,
+      workingDays: metrics.totalWorkingDays,
+      present: metrics.presentDays,
+      absent: metrics.absentDays,
+      late: metrics.lateDays,
+      leave: metrics.leaveDays,
+      holidays: metrics.holidays,
+      percentage: metrics.attendancePercentage
     };
-
-    studentRecords.forEach(record => {
-      const status = (record.status || record.attendance_status || "").toLowerCase();
-      if (status.includes("present") || status.includes("on time")) {
-        summary.present++;
-      } else if (status.includes("absent")) {
-        summary.absent++;
-      } else if (status.includes("late")) {
-        summary.late++;
-      } else if (status.includes("leave")) {
-        summary.leave++;
-      }
-    });
-
-    summary.percentage = Math.round((summary.present / summary.totalDays) * 100);
-    
-    return summary;
   } catch (e) {
     console.error("Unexpected error fetching attendance summary:", e);
     return null;
@@ -224,26 +332,26 @@ export async function getStudentAttendanceSummary(studentId, days = 30) {
 
 /**
  * Export attendance data to CSV
- * @param {Array} attendanceData - Attendance records
- * @param {string} filename - Filename for download
  */
 export function exportAttendanceToCSV(attendanceData, filename = "student_attendance.csv") {
   if (!attendanceData || attendanceData.length === 0) {
     return;
   }
 
-  const csvHeader = "Student ID,Student Name,Date,Status,Check In,Check Out,IP Address\n";
+  const csvHeader = "Student ID,Student Name,Date,Day,Status,Check In,Check Out,Attendance Marked,IP Address\n";
   
   const csvContent = attendanceData.map(record => {
     const studentId = record.student_id || record.user_email || record.user_id || "";
     const studentName = record.student_name || record.user_name || record.name || "";
     const date = record.attendance_date || record.date || "";
+    const day = record.day_name || "";
     const status = record.status || record.attendance_status || "";
     const checkIn = record.check_in_time || record.check_in || "--:--";
     const checkOut = record.check_out_time || record.check_out || "Not Checked Out";
+    const marked = record.attendance_marked ? "Yes" : "No";
     const ipAddress = record.ip_address || record.public_ip || "127.0.0.1";
     
-    return `${studentId},"${studentName}",${date},${status},${checkIn},${checkOut},${ipAddress}`;
+    return `${studentId},"${studentName}",${date},${day},${status},${checkIn},${checkOut},${marked},${ipAddress}`;
   }).join("\n");
 
   const csv = csvHeader + csvContent;
@@ -338,6 +446,8 @@ export async function fetchStudentAttendanceHistory({
   from = "",
   to = "",
   month = "",
+  year = "",
+  status = "",
   date = "",
   requesterEmail = "",
   requesterRole = "admin"
@@ -348,6 +458,8 @@ export async function fetchStudentAttendanceHistory({
     if (from) params.append("from", from);
     if (to) params.append("to", to);
     if (month) params.append("month", month);
+    if (year) params.append("year", year);
+    if (status) params.append("status", status);
     if (date) params.append("date", date);
     if (requesterEmail) params.append("requesterEmail", requesterEmail);
     if (requesterRole) params.append("requesterRole", requesterRole);
@@ -373,7 +485,7 @@ export async function triggerDailyAutoAbsentJob(targetDate = "") {
     const response = await fetch("/api/attendance/auto-absent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: targetDate })
+      body: JSON.stringify({ date: targetDate || getKarachiTodayDateString() })
     });
     return await response.json();
   } catch (e) {
@@ -381,4 +493,3 @@ export async function triggerDailyAutoAbsentJob(targetDate = "") {
     return { success: false, error: e.message };
   }
 }
-

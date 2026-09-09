@@ -10,6 +10,7 @@ import { enrollStudentWithCredentials, registerEmployeeWithCredentials } from "@
 import FinancialChart from "@/components/FinancialChart";
 import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import AdminRecentSubmissionsWidget from "@/components/AdminRecentSubmissionsWidget";
+import { getKarachiTodayDateString, getKarachiMinutes } from "@/lib/studentAttendanceUtils";
 import {
   FaUsers,
   FaCalendarCheck,
@@ -270,9 +271,8 @@ export default function DashboardPage() {
       const savedEmpAtt = JSON.parse(localStorage.getItem("today_attendance_employee") || "[]");
       const savedStuAtt = JSON.parse(localStorage.getItem("today_attendance_student") || "[]");
 
-      const todayStr = new Date().toISOString().split("T")[0];
-      const now = new Date();
-      const currentMins = now.getHours() * 60 + now.getMinutes();
+      const todayStr = getKarachiTodayDateString();
+      const currentMins = getKarachiMinutes();
 
       const formatPresentText = (record) => {
         const timeIn = record.check_in_time || record.check_in || "";
@@ -307,15 +307,26 @@ export default function DashboardPage() {
 
       const isCandidateMatch = (record, targetEmail, targetItem) => {
         if (!record) return false;
-        const rEmail = (record.user_email || record.email || record.user_id || record.student_id || record.employee_id || "").toLowerCase().trim();
-        const rName = (record.user_name || record.name || record.full_name || record.employee_name || "").toLowerCase().trim();
-        const targetName = (targetItem?.full_name || targetItem?.name || "").toLowerCase().trim();
+        const cleanTargetEmail = (targetEmail || targetItem?.email || "").toLowerCase().trim();
         const targetId = String(targetItem?.id || "").toLowerCase().trim();
-        const rId = String(record.employee_id || record.student_id || record.user_id || "").toLowerCase().trim();
+        const targetStudentId = String(targetItem?.student_id || targetItem?.enrollment_no || "").toLowerCase().trim();
+        const targetName = (targetItem?.full_name || targetItem?.name || targetItem?.student_name || "").toLowerCase().trim();
 
-        if (isEmailMatch(rEmail, targetEmail)) return true;
-        if (targetId && targetId.length > 5 && rId && rId.length > 5 && targetId === rId) return true;
-        if (isNameMatch(rName, targetName)) return true;
+        const rEmail = (record.student_email || record.user_email || record.email || "").toLowerCase().trim();
+        const rStudentId = String(record.student_id || record.user_id || record.employee_id || "").toLowerCase().trim();
+        const rName = (record.student_name || record.user_name || record.full_name || record.name || record.employee_name || "").toLowerCase().trim();
+
+        // 1. Permanent ID matching (highest priority)
+        if (targetId && rStudentId && targetId === rStudentId) return true;
+        if (targetStudentId && rStudentId && targetStudentId === rStudentId) return true;
+
+        // 2. Email matching
+        if (cleanTargetEmail && rEmail && isEmailMatch(rEmail, cleanTargetEmail)) return true;
+        if (cleanTargetEmail && rStudentId && isEmailMatch(rStudentId, cleanTargetEmail)) return true;
+
+        // 3. Name matching as fallback
+        if (targetName && rName && isNameMatch(rName, targetName)) return true;
+
         return false;
       };
 
@@ -331,10 +342,34 @@ export default function DashboardPage() {
         });
 
         if (dbTodayRecord) {
-          const checkIn = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "--:--";
+          let checkIn = dbTodayRecord.check_in_time || dbTodayRecord.check_in || "--:--";
+          if (checkIn && checkIn !== "--:--" && !checkIn.toUpperCase().includes("AM") && !checkIn.toUpperCase().includes("PM")) {
+            const parts = checkIn.split(":");
+            if (parts.length >= 2) {
+              let h = parseInt(parts[0], 10);
+              const m = parts[1];
+              const mod = h >= 12 ? "PM" : "AM";
+              h = h % 12 || 12;
+              checkIn = `${String(h).padStart(2, "0")}:${m} ${mod}`;
+            }
+          }
           const checkOut = dbTodayRecord.check_out_time || dbTodayRecord.check_out || "Not Checked Out";
-          const rawStatus = dbTodayRecord.attendance_status || dbTodayRecord.status || (checkOut && checkOut !== "Not Checked Out" && checkOut !== "--:--" ? "Present (Completed) 🟢" : "Present (On Time) 🟢");
-          return { checkIn, checkOut, status: rawStatus.includes("🟢") || rawStatus.includes("🔴") ? rawStatus : `${rawStatus} 🟢` };
+          const rawStatus = (dbTodayRecord.attendance_status || dbTodayRecord.status || "Present").toString();
+          
+          let formattedStatus = rawStatus;
+          const statusLower = rawStatus.toLowerCase();
+          if (statusLower.includes("late")) {
+            formattedStatus = "Late 🟠";
+          } else if (statusLower.includes("present") || statusLower.includes("on time")) {
+            formattedStatus = "Present 🟢";
+          } else if (statusLower.includes("absent")) {
+            formattedStatus = "Absent 🔴";
+          } else if (statusLower.includes("holiday") || statusLower.includes("sunday")) {
+            formattedStatus = "Holiday 🏖️";
+          } else if (statusLower.includes("leave")) {
+            formattedStatus = `On Leave 🌴`;
+          }
+          return { checkIn, checkOut, status: formattedStatus };
         }
 
         // 2. Direct user local storage log
@@ -544,13 +579,29 @@ export default function DashboardPage() {
     loadAllMembers();
     fetchRecentActivities().then(data => setRecentActivities(data || []));
 
+    // Realtime attendance listener
+    const attChannel = supabase
+      .channel("admin-dashboard-realtime-attendance")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        () => {
+          loadAllMembers();
+          loadDashboardData();
+        }
+      )
+      .subscribe();
+
     const handleUpdate = () => {
       loadDashboardData();
       loadAllMembers();
     };
 
     window.addEventListener("dataChanged", handleUpdate);
-    return () => window.removeEventListener("dataChanged", handleUpdate);
+    return () => {
+      window.removeEventListener("dataChanged", handleUpdate);
+      supabase.removeChannel(attChannel);
+    };
   }, [loadDashboardData, loadAllMembers]);
 
   // Filtered & Sorted Members List

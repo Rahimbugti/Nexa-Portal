@@ -77,11 +77,15 @@ export default function StudentAttendancePage() {
           const attendance = await getStudentAttendanceByDate(selectedDate);
           setAttendanceRecords(attendance || []);
 
-          // Initialize attendance state
+          // Initialize attendance state with multi-key mapping
           const state = {};
           (attendance || []).forEach(record => {
-            const studentId = record.student_id || record.user_email || record.user_id || "";
-            state[studentId] = record.status || record.attendance_status || "Present";
+            const status = record.status || record.attendance_status || "Present";
+            if (record.student_id) state[record.student_id] = status;
+            if (record.student_email) state[record.student_email.toLowerCase().trim()] = status;
+            if (record.user_email) state[record.user_email.toLowerCase().trim()] = status;
+            if (record.email) state[record.email.toLowerCase().trim()] = status;
+            if (record.user_id) state[record.user_id] = status;
           });
           setAttendanceState(state);
         }
@@ -94,6 +98,22 @@ export default function StudentAttendancePage() {
     };
 
     loadData();
+
+    // Supabase Realtime subscription
+    const channel = supabase
+      .channel("student-attendance-admin-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedDate]);
 
   // Filter students based on search
@@ -408,11 +428,20 @@ export default function StudentAttendancePage() {
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
-                  const studentId = student.email || student.id || student.student_id || "";
-                  const status = attendanceState[studentId] || "Present";
-                  const record = attendanceRecords.find(r => 
-                    (r.student_id || r.user_email || r.user_id || "") === studentId
-                  );
+                  const studentId = student.id || student.email || student.student_id || "";
+                  const cleanEmail = (student.email || "").toLowerCase().trim();
+                  const status = attendanceState[student.id] || 
+                                 attendanceState[cleanEmail] || 
+                                 attendanceState[student.student_id] || 
+                                 attendanceState[student.enrollment_no] || 
+                                 "Present";
+                  const record = attendanceRecords.find(r => {
+                    const rId = String(r.student_id || r.user_id || "").toLowerCase().trim();
+                    const rEmail = (r.student_email || r.user_email || r.email || "").toLowerCase().trim();
+                    return (student.id && rId === String(student.id).toLowerCase()) ||
+                           (cleanEmail && rEmail === cleanEmail) ||
+                           (cleanEmail && rId === cleanEmail);
+                  });
 
                   return (
                     <tr key={studentId} className="hover:bg-[#F8FAFC] transition-colors">

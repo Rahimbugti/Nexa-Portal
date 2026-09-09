@@ -12,6 +12,7 @@ import { dbFetch, dbSaveRecord } from "@/lib/dbPersistence";
 import UserTodayTasksWidget from "@/components/UserTodayTasksWidget";
 import { calculate30DayFeeCycles } from "@/lib/studentEnrollmentUtils";
 import { isRecordFromToday, getTodayDateString } from "@/lib/attendanceUtils";
+import { fetchCurrentPublicIp } from "@/lib/attendanceIpUtils";
 import { startScreenBroadcast, stopScreenBroadcast, WebRTCViewerClient } from "@/lib/webrtcScreenService";
 import {
   FaGraduationCap,
@@ -938,6 +939,8 @@ export default function StudentDedicatedDashboardPage() {
 
         setStudentInfo((prev) => ({
           ...prev,
+          id: matched.id || matched.student_id || matched.user_id || prev.id,
+          student_id: matched.id || matched.student_id || matched.user_id || prev.student_id,
           name: matched.full_name || matched.student_name || savedName || "Student / Intern",
           email: matched.email || savedEmail,
           phone: matched.phone || "0300-1234567",
@@ -948,7 +951,7 @@ export default function StudentDedicatedDashboardPage() {
           startDate: startDate,
           endDate: endDate,
           batch: matched.batch || (isInternRole ? "Internship Cohort #2026" : prev.batch),
-          enrollmentNo: matched.id || matched.student_id || matched.intern_id || prev.enrollmentNo,
+          enrollmentNo: matched.enrollment_no || matched.student_id || matched.id || prev.enrollmentNo,
           progress: progressPct,
           attendance: studentAttendanceRate,
           instructor: assignedInstructor,
@@ -1186,7 +1189,7 @@ export default function StudentDedicatedDashboardPage() {
   }, [mcqModalOpen, activeExam, examTimerSeconds, latestAttemptResult]);
 
   const handleStudentCheckIn = async () => {
-    if (todayAttendance?.check_in_time) {
+    if (todayAttendance?.check_in_time && todayAttendance?.check_in_time !== "--:--") {
       showToast("Already Checked In ℹ️", `Checked in today at ${todayAttendance.check_in_time}.`, "info");
       return;
     }
@@ -1198,15 +1201,21 @@ export default function StudentDedicatedDashboardPage() {
 
     // Shift starts at 10:00 AM (600 mins). Grace period up to 10:15 AM (615 mins).
     const isLate = currentMins > 615;
-    const attStatus = isLate ? "Late (Shift 10:00 AM - 06:00 PM)" : "Present (On Time)";
+    const attStatus = isLate ? "Late" : "Present";
     const todayDateStr = getTodayDateString();
     const studentEmail = (studentInfo.email || localStorage.getItem("current_user_email") || "").toLowerCase().trim();
     const studentName = studentInfo.name || localStorage.getItem("current_user_name") || "Student Member";
+    const studentPermanentId = studentInfo.id || studentInfo.student_id || studentInfo.enrollmentNo || studentEmail;
+
+    // Detect public IP
+    const currentIp = await fetchCurrentPublicIp().catch(() => null) || "127.0.0.1";
 
     const newRecord = {
       id: `att-${Date.now()}`,
-      student_id: studentInfo.enrollmentNo || studentEmail,
-      employee_id: studentInfo.enrollmentNo || studentEmail,
+      student_id: studentPermanentId,
+      student_name: studentName,
+      student_email: studentEmail,
+      employee_id: studentEmail,
       user_id: studentEmail,
       user_email: studentEmail,
       email: studentEmail,
@@ -1219,46 +1228,74 @@ export default function StudentDedicatedDashboardPage() {
       check_in: timeStr,
       check_out_time: "Not Checked Out",
       check_out: "Not Checked Out",
-      attendance_status: attStatus,
+      attendance_status: attStatus === "Late" ? "Late (Shift 10:00 AM - 06:00 PM)" : "Present (On Time)",
       status: attStatus,
+      attendance_marked: true,
       attendance_date: todayDateStr,
       date: todayDateStr,
       timestamp: now.toISOString(),
       created_at: now.toISOString(),
-      public_ip: "127.0.0.1",
+      public_ip: currentIp,
+      ip_address: currentIp,
+      network_verified: true
     };
 
-    setTodayAttendance(newRecord);
-    setStudentAttendanceHistory((prev) => [newRecord, ...prev.filter(r => r.attendance_date !== newRecord.attendance_date)]);
-
     try {
-      const key = `today_attendance_${studentEmail}`;
-      localStorage.setItem(key, JSON.stringify([newRecord]));
+      const apiRes = await fetch("/api/attendance/student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "clock_in",
+          records: {
+            ...newRecord,
+            is_self_student_clockin: true
+          }
+        })
+      });
 
-      // 1. Save to master attendance logs cache
+      const apiData = await apiRes.json().catch(() => ({}));
+      if (!apiRes.ok || !apiData.success || apiData.error) {
+        showToast("Attendance Error 🛑", apiData.error || "Attendance could not be recorded in database.", "error");
+        setMarkingAttendance(false);
+        return;
+      }
+
+      const confirmedRecord = apiData.data?.[0] || newRecord;
+      setTodayAttendance(confirmedRecord);
+      setStudentAttendanceHistory((prev) => [confirmedRecord, ...prev.filter(r => (r.attendance_date || r.date) !== todayDateStr)]);
+
+      const key = `today_attendance_${studentEmail}`;
+      localStorage.setItem(key, JSON.stringify([confirmedRecord]));
+
+      // Save to master attendance logs cache
       const masterLogs = JSON.parse(localStorage.getItem("software_house_master_attendance_logs") || "[]");
-      const updatedMaster = [newRecord, ...masterLogs.filter(l => !(
-        ((l.user_email || l.email || "").toLowerCase().trim() === studentEmail) &&
+      const updatedMaster = [confirmedRecord, ...masterLogs.filter(l => !(
+        ((l.user_email || l.email || l.student_email || "").toLowerCase().trim() === studentEmail) &&
         (l.attendance_date === todayDateStr || l.date === todayDateStr)
       ))];
       localStorage.setItem("software_house_master_attendance_logs", JSON.stringify(updatedMaster));
-
-      // 2. Direct database persistence call
-      await dbSaveRecord("attendance", newRecord).catch(() => {});
-      await fetch("/api/persistence", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "attendance", record: newRecord, action: "save" })
-      }).catch(() => {});
+      window.dispatchEvent(new Event("dataChanged"));
+      showToast("Attendance Recorded ✅", `Checked in as ${attStatus} at ${timeStr}.`, "success");
+    } catch (err) {
+      console.error("Attendance submission error:", err);
+      showToast("Network Error 🛑", "Failed to reach attendance server.", "error");
+    } finally {
+      setMarkingAttendance(false);
+    }
+  };
 
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("storage"));
         window.dispatchEvent(new Event("dataChanged"));
       }
-    } catch (e) {}
 
-    setMarkingAttendance(false);
-    showToast("Check-In Successful 🟢", `Checked in at ${timeStr} as ${attStatus}.`, "success");
+      showToast("Check-In Successful 🟢", `Checked in at ${timeStr} as ${attStatus}.`, "success");
+    } catch (e) {
+      console.error("Check-in error:", e);
+      showToast("Notice ℹ️", "Check-in logged locally.", "info");
+    } finally {
+      setMarkingAttendance(false);
+    }
   };
 
   const handleStudentCheckOut = async () => {

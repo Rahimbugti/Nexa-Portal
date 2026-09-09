@@ -798,17 +798,16 @@ export function generatePrintableUserMonthlyAttendancePdf({
  */
 export function generateStudentAttendancePdf({
   student = {},
-  period = "Current Term",
+  period = "Complete Attendance History",
   records = [],
   summary = null,
   generatedBy = "Administrator"
 } = {}) {
   const studentName = student.full_name || student.name || student.student_name || "Student Candidate";
-  const studentEmail = student.email || student.user_email || student.student_id || "—";
-  const enrollmentNo = student.enrollment_no || student.student_id || student.id || "NEXA-STU";
+  const studentEmail = student.email || student.student_email || student.user_email || student.student_id || "—";
+  const studentId = student.enrollment_no || student.student_id || student.id || "NEXA-STU";
   const courseName = student.course_name || student.course || student.department || "Full Stack Software Development";
   const batch = student.batch || "Regular Batch";
-  const admissionDate = student.admission_date || student.startDate || "—";
   const reportDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 
   // Calculate or use provided summary
@@ -856,9 +855,10 @@ export function generateStudentAttendancePdf({
         const dateStr = r.attendance_date || r.date || "—";
         const dayName = r.day_name || (dateStr !== "—" ? new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }) : "—");
         const status = r.status || r.attendance_status || "Present";
-        const checkIn = r.check_in_time || r.check_in || "—";
-        const checkOut = r.check_out_time || r.check_out || "—";
-        const networkStatus = r.network_verified || r.public_ip ? "Office Verified 🟢" : "Standard";
+        const checkIn = r.check_in_time && r.check_in_time !== "--:--" ? r.check_in_time : (r.check_in && r.check_in !== "--:--" ? r.check_in : "—");
+        const isMarked = r.attendance_marked === true;
+        const markedDisplay = isMarked ? "Yes" : "No";
+        const ipAddress = r.ip_address && r.ip_address !== "N/A" ? r.ip_address : (r.public_ip && r.public_ip !== "N/A" ? r.public_ip : (isMarked ? "Office Verified" : "N/A"));
 
         let badgeBg = "#ecfdf5";
         let badgeColor = "#047857";
@@ -893,9 +893,9 @@ export function generateStudentAttendancePdf({
                 ${status}
               </span>
             </td>
-            <td style="font-family: monospace; font-size: 11px; font-weight: 700; color: #059669;">${checkIn}</td>
-            <td style="font-family: monospace; font-size: 11px; font-weight: 700; color: #475569;">${checkOut}</td>
-            <td style="font-size: 10px; font-weight: 700; color: #2563eb;">${networkStatus}</td>
+            <td style="font-family: monospace; font-size: 11px; font-weight: 700; color: #0f172a;">${checkIn}</td>
+            <td style="font-size: 11px; font-weight: 700; color: ${isMarked ? '#059669' : '#64748b'};">${markedDisplay}</td>
+            <td style="font-family: monospace; font-size: 10px; color: #475569;">${ipAddress}</td>
           </tr>
         `;
       }).join("")
@@ -1011,22 +1011,22 @@ export function generateStudentAttendancePdf({
             </div>
             <div class="badge-box">
               <div class="badge-title">STUDENT ATTENDANCE REPORT</div>
-              <div class="badge-date">Report Date: ${reportDate}</div>
+              <div class="badge-date">Generated Date: ${reportDate}</div>
             </div>
           </div>
 
           <div class="student-card">
             <div><strong>Student Name:</strong> ${studentName}</div>
-            <div><strong>Official Email:</strong> ${studentEmail}</div>
-            <div><strong>Enrollment No:</strong> ${enrollmentNo}</div>
+            <div><strong>Student Email:</strong> ${studentEmail}</div>
+            <div><strong>Student ID:</strong> ${studentId}</div>
+            <div><strong>Selected Date Range:</strong> <span style="color: #2563eb; font-weight: bold;">${period}</span></div>
             <div><strong>Course / Domain:</strong> ${courseName}</div>
             <div><strong>Batch:</strong> ${batch}</div>
-            <div><strong>Report Period:</strong> <span style="color: #2563eb; font-weight: bold;">${period}</span></div>
           </div>
 
           <div class="stats-grid">
             <div class="stat-card">
-              <div class="stat-label">Working Days</div>
+              <div class="stat-label">Total Working Days</div>
               <div class="stat-value" style="color: #0f172a;">${totalWorkingDays}</div>
             </div>
             <div class="stat-card">
@@ -1034,19 +1034,19 @@ export function generateStudentAttendancePdf({
               <div class="stat-value" style="color: #059669;">${presentDays}</div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Absent</div>
-              <div class="stat-value" style="color: #dc2626;">${absentDays}</div>
-            </div>
-            <div class="stat-card">
               <div class="stat-label">Late</div>
               <div class="stat-value" style="color: #d97706;">${lateDays}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Absent</div>
+              <div class="stat-value" style="color: #dc2626;">${absentDays}</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Holidays</div>
               <div class="stat-value" style="color: #64748b;">${holidays}</div>
             </div>
             <div class="stat-card" style="background: #eff6ff; border-color: #bfdbfe;">
-              <div class="stat-label" style="color: #1d4ed8;">Attendance %</div>
+              <div class="stat-label" style="color: #1d4ed8;">Attendance Percentage</div>
               <div class="stat-value" style="color: #1d4ed8;">${attendancePercentage}%</div>
             </div>
           </div>
@@ -1054,13 +1054,13 @@ export function generateStudentAttendancePdf({
           <table>
             <thead>
               <tr>
-                <th style="width: 35px; text-align: center;">#</th>
+                <th style="width: 35px; text-align: center;">Sr No</th>
                 <th style="width: 90px;">Date</th>
                 <th style="width: 95px;">Day</th>
                 <th style="width: 110px;">Status</th>
-                <th style="width: 95px;">Check-In</th>
-                <th style="width: 95px;">Check-Out</th>
-                <th>Network Verification</th>
+                <th style="width: 95px;">Check-in Time</th>
+                <th style="width: 120px;">Attendance Marked</th>
+                <th>IP Address</th>
               </tr>
             </thead>
             <tbody>
