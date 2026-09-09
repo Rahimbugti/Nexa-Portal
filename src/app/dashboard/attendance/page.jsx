@@ -403,56 +403,35 @@ export default function AttendancePage() {
       }
       setTodayRecords(userLogs);
 
+      // 1. Fetch live cloud attendance logs
       try {
-        const cloudLogs = await dbFetch("attendance", [], true).catch(() => []);
-        const masterSaved = localStorage.getItem("software_house_master_attendance_logs");
-        let localLogs = [];
-        if (masterSaved) {
-          try {
-            localLogs = JSON.parse(masterSaved);
-          } catch(e) {}
-        }
+        const { data: dbLogs } = await supabase
+          .from("attendance")
+          .select("*")
+          .order("created_at", { ascending: false });
 
-        // Background sync local logs to cloud
-        if (Array.isArray(localLogs) && localLogs.length > 0) {
-          localLogs.forEach(log => {
-            if (log) {
-              const attDate = log.attendance_date || log.date || (log.timestamp ? log.timestamp.split("T")[0] : new Date().toISOString().split("T")[0]);
-              fetch("/api/persistence", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  table: "attendance",
-                  record: {
-                    user_email: log.user_email || log.email || log.employee_id,
-                    employee_id: log.user_email || log.email || log.employee_id,
-                    user_name: log.user_name || log.name,
-                    date: attDate,
-                    check_in: log.check_in_time || log.check_in,
-                    check_out: log.check_out_time || log.check_out,
-                    status: log.attendance_status || log.status || "Present",
-                    ip_address: log.public_ip || log.ip_address || "127.0.0.1"
-                  },
-                  action: "save"
-                })
-              }).catch(() => {});
-            }
-          });
+        let formattedLogs = [];
+        if (Array.isArray(dbLogs) && dbLogs.length > 0) {
+          formattedLogs = dbLogs.map(item => ({
+            ...item,
+            user_email: item.user_email || item.student_email || item.employee_id || item.email,
+            user_name: item.user_name || item.student_name || item.employee_name || item.name || "Member",
+            date: item.attendance_date || item.date,
+            attendance_date: item.attendance_date || item.date,
+            check_in: item.check_in_time || item.check_in || "--:--",
+            check_in_time: item.check_in_time || item.check_in || "--:--",
+            check_out: item.check_out_time || item.check_out || "Not Checked Out",
+            check_out_time: item.check_out_time || item.check_out || "Not Checked Out",
+            status: item.attendance_status || item.status || "Present",
+            attendance_status: item.attendance_status || item.status || "Present",
+            public_ip: item.ip_address || item.public_ip || "—",
+            ip_address: item.ip_address || item.public_ip || "—"
+          }));
+        } else {
+          const fallback = await dbFetch("attendance", [], true).catch(() => []);
+          formattedLogs = Array.isArray(fallback) ? fallback : [];
         }
-
-        // Deduplicate & Merge Cloud + Local Logs
-        const map = new Map();
-        [...(cloudLogs || []), ...(localLogs || [])].forEach(item => {
-          if (!item) return;
-          const userKey = (item.user_email || item.email || item.user_name || item.name || item.id || "").toLowerCase().trim();
-          const dateKey = item.attendance_date || item.date || "";
-          const timeKey = item.check_in_time || item.check_in || "";
-          const uniqueKey = `${userKey}_${dateKey}_${timeKey}`;
-          if (uniqueKey && !map.has(uniqueKey)) {
-            map.set(uniqueKey, item);
-          }
-        });
-        setAllSystemLogs(Array.from(map.values()));
+        setAllSystemLogs(formattedLogs);
       } catch(e) {}
 
       // Auto-verify Wi-Fi Network
@@ -487,6 +466,37 @@ export default function AttendancePage() {
     };
     
     fetchData();
+
+    // Supabase Realtime Channel Subscription for live cross-device sync
+    const liveHubChannel = supabase
+      .channel("admin-attendance-hub-live-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        (payload) => {
+          console.log("Realtime attendance change detected in Hub:", payload);
+          fetchData();
+        }
+      )
+      .subscribe((status) => {
+        console.log("Realtime subscription status on Attendance Hub:", status);
+      });
+
+    const handleFocusSync = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchData();
+      }
+    };
+
+    window.addEventListener("focus", handleFocusSync);
+    window.addEventListener("dataChanged", fetchData);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleFocusSync);
+    }
+
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 20000);
     
     // Load attendance policy
     const loadPolicy = async () => {
@@ -498,6 +508,16 @@ export default function AttendancePage() {
       }
     };
     loadPolicy();
+
+    return () => {
+      window.removeEventListener("focus", handleFocusSync);
+      window.removeEventListener("dataChanged", fetchData);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleFocusSync);
+      }
+      clearInterval(intervalId);
+      supabase.removeChannel(liveHubChannel);
+    };
   }, []);
 
   const handleVerifyIpify = async (silent = false) => {

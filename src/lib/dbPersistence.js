@@ -50,7 +50,8 @@ export function cleanPayloadForDb(record, table = "") {
 
   const invalidColumns = [
     "daily_logs", "resources_url", "screen_access_url",
-    "reminder_sent", "assigned_password"
+    "reminder_sent", "assigned_password", "attendance_marked",
+    "network_verified", "is_self_student_clockin"
   ];
 
   Object.keys(record).forEach((key) => {
@@ -103,8 +104,14 @@ export function cleanPayloadForDb(record, table = "") {
 /**
  * Unique key helper for deduplicating records across DB & Local Storage datasets.
  */
-function getDedupeKey(item) {
+function getDedupeKey(item, table = "") {
   if (!item) return "";
+  if (table === "attendance" || item.attendance_date || item.check_in_time || item.check_in) {
+    const user = String(item.user_email || item.email || item.student_email || item.employee_id || item.student_id || item.user_id || "").toLowerCase().trim();
+    const d = String(item.attendance_date || item.date || (item.timestamp ? item.timestamp.split("T")[0] : "")).slice(0, 10);
+    if (user && d) return `att_${user}_${d}`;
+    if (user) return `att_${user}`;
+  }
   const email = String(item.email || item.student_email || item.assigned_to_email || item.applicant_email || "").toLowerCase().trim();
   if (email && email.includes("@")) return email;
   const id = String(item.id || item.student_id || item.employee_id || item.intern_id || "").toLowerCase().trim();
@@ -124,7 +131,7 @@ const MEM_CACHE_TTL = 30000; // 30 seconds TTL
 export async function dbFetch(table, defaultData = [], forceFresh = false) {
   const storageKey = TABLE_STORAGE_KEYS[table] || `persistent_${table}`;
   
-  if (forceFresh) {
+  if (forceFresh || table === "attendance") {
     MEM_CACHE.delete(table);
   } else {
     // Check RAM Cache
@@ -177,10 +184,10 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
   let fetchedFromDb = false;
   try {
     if (typeof window !== "undefined") {
-      const cacheBust = forceFresh ? `&t=${Date.now()}` : "";
+      const cacheBust = forceFresh || table === "attendance" ? `&t=${Date.now()}` : "";
       const res = await fetch(`/api/persistence?table=${encodeURIComponent(table)}${cacheBust}`, {
         cache: "no-store",
-        headers: { "Cache-Control": "no-cache" }
+        headers: { "Cache-Control": "no-cache, no-store, must-revalidate" }
       }).catch(() => null);
       if (res && res.ok) {
         const json = await res.json();
@@ -209,7 +216,7 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
         const seen = new Set();
         localData = combined.filter(item => {
           if (!item) return false;
-          const k = getDedupeKey(item);
+          const k = getDedupeKey(item, table);
           if (k && seen.has(k)) return false;
           if (k) seen.add(k);
           return true;
@@ -218,11 +225,12 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
 
       if (table === "interns") {
         const alt1 = JSON.parse(localStorage.getItem("software_house_interns") || "[]");
-        const combined = [...localData, ...alt1];
+        const alt2 = JSON.parse(localStorage.getItem("persistent_interns") || "[]");
+        const combined = [...localData, ...alt1, ...alt2];
         const seen = new Set();
         localData = combined.filter(item => {
           if (!item) return false;
-          const k = getDedupeKey(item);
+          const k = getDedupeKey(item, table);
           if (k && seen.has(k)) return false;
           if (k) seen.add(k);
           return true;
@@ -236,40 +244,39 @@ export async function dbFetch(table, defaultData = [], forceFresh = false) {
   if (fetchedFromDb && Array.isArray(dbData)) {
     const map = new Map();
 
-    // 1. Load local records into map first
+    // 1. Initialize with local storage fallback
     (localData || []).forEach((item) => {
       if (!item || isDeleted(item)) return;
-      const key = getDedupeKey(item);
+      const key = getDedupeKey(item, table);
       if (key) map.set(key, item);
     });
 
-    // 2. Overlay / Merge DB data while preserving local fields (e.g. track_type, is_remote, internship_mode)
+    // 2. Overlay / Merge DB data (DB DATA TAKES PRIORITY)
     (dbData || []).forEach((item) => {
       if (!item || isDeleted(item)) return;
-      const key = getDedupeKey(item);
+      const key = getDedupeKey(item, table);
       if (key && map.has(key)) {
         const existing = map.get(key) || {};
         map.set(key, {
-          ...item,
           ...existing,
-          id: existing.id || item.id,
-          // Preserve student fields
-          track_type: existing.track_type || item.track_type || "Remote Student",
-          trackType: existing.trackType || item.trackType || "Remote Student",
-          is_remote: existing.is_remote ?? item.is_remote ?? (existing.internship_mode || "").toLowerCase().includes("remote"),
-          isRemote: existing.isRemote ?? item.isRemote ?? (existing.internship_mode || "").toLowerCase().includes("remote"),
-          batch: existing.batch || item.batch || "Batch #14 (Remote Online)",
-          course_name: existing.course_name || item.course_name || existing.tech_domain || "Full Stack MERN Web Development",
-          tech_domain: existing.tech_domain || item.tech_domain || existing.course_name || "Full Stack MERN Web Development",
-          course_fee: existing.course_fee || item.course_fee || 25000,
-          fee_paid: existing.fee_paid || item.fee_paid || 25000,
-          // Preserve intern fields
-          internship_mode: existing.internship_mode || item.internship_mode || (existing.is_remote ? "Remote / Online" : "On-Site / Offline"),
-          start_date: existing.start_date || item.start_date || item.admission_date,
-          end_date: existing.end_date || item.end_date,
-          progress: existing.progress !== undefined ? existing.progress : (item.progress !== undefined ? item.progress : 0),
-          status: existing.status || item.status || "active",
-          role: existing.role || item.role
+          ...item,
+          id: item.id || existing.id,
+          // Preserve local UI flags if missing on DB
+          track_type: item.track_type || existing.track_type || "Remote Student",
+          trackType: item.trackType || existing.trackType || "Remote Student",
+          is_remote: item.is_remote ?? existing.is_remote ?? (item.internship_mode || "").toLowerCase().includes("remote"),
+          isRemote: item.isRemote ?? existing.isRemote ?? (item.internship_mode || "").toLowerCase().includes("remote"),
+          batch: item.batch || existing.batch || "Batch #14 (Remote Online)",
+          course_name: item.course_name || existing.course_name || item.tech_domain || "Full Stack MERN Web Development",
+          tech_domain: item.tech_domain || existing.tech_domain || item.course_name || "Full Stack MERN Web Development",
+          course_fee: item.course_fee || existing.course_fee || 25000,
+          fee_paid: item.fee_paid || existing.fee_paid || 25000,
+          internship_mode: item.internship_mode || existing.internship_mode || (item.is_remote ? "Remote / Online" : "On-Site / Offline"),
+          start_date: item.start_date || existing.start_date || item.admission_date,
+          end_date: item.end_date || existing.end_date,
+          progress: item.progress !== undefined ? item.progress : (existing.progress !== undefined ? existing.progress : 0),
+          status: item.status || existing.status || "active",
+          role: item.role || existing.role
         });
       } else if (key) {
         map.set(key, item);

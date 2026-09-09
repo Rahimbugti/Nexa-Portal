@@ -104,11 +104,15 @@ export async function GET(request) {
           const email = user?.email || (empIdStr.includes("@") ? empIdStr : (item.user_email || item.student_id || item.email || ""));
           const name = user?.full_name || user?.name || item.name || item.user_name || item.employee_name || (email ? email.split("@")[0] : "Member");
           return {
+            ...item,
             id: item.id,
+            student_id: item.student_id || user?.id || empIdStr,
             employee_id: email || empIdStr,
-            user_email: email || empIdStr,
+            user_email: email || item.user_email || empIdStr,
+            student_email: email || item.student_email || item.user_email || empIdStr,
             email: email || empIdStr,
             user_name: name,
+            student_name: name,
             name: name,
             attendance_date: item.date || item.attendance_date,
             date: item.date || item.attendance_date,
@@ -116,6 +120,7 @@ export async function GET(request) {
             check_out_time: item.check_out ? convertTo12HourTime(item.check_out) : (item.check_out_time || "Not Checked Out"),
             attendance_status: item.status || item.attendance_status || (item.check_out ? "Present (Completed)" : "Present (On Time)"),
             status: item.status || item.attendance_status,
+            ip_address: item.ip_address || item.public_ip || "127.0.0.1",
             public_ip: item.ip_address || item.public_ip || "127.0.0.1",
             timestamp: item.timestamp || `${item.date || item.attendance_date || new Date().toISOString().split("T")[0]}T${item.check_in || "00:00:00"}`
           };

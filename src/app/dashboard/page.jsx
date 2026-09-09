@@ -265,7 +265,20 @@ export default function DashboardPage() {
       const persistentStudents = cloudStudents || [];
       const persistentInterns = cloudInterns || [];
       const persistentAppUsers = cloudAppUsers || [];
-      const dbAttendance = cloudAtt || [];
+      
+      // Direct fresh query from Supabase to guarantee instantaneous cross-device sync
+      let directAttendance = [];
+      try {
+        const { data: attFromDb } = await supabase
+          .from("attendance")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (Array.isArray(attFromDb) && attFromDb.length > 0) {
+          directAttendance = attFromDb;
+        }
+      } catch (e) {}
+
+      const dbAttendance = directAttendance.length > 0 ? directAttendance : (cloudAtt || []);
       const dbLeaves = cloudLeaves || [];
 
       const masterLogs = JSON.parse(localStorage.getItem("software_house_master_attendance_logs") || "[]");
@@ -320,6 +333,7 @@ export default function DashboardPage() {
         // 1. Permanent ID matching (highest priority)
         if (targetId && rStudentId && targetId === rStudentId) return true;
         if (targetStudentId && rStudentId && targetStudentId === rStudentId) return true;
+        if (targetId && record.id && String(record.id).toLowerCase().trim() === targetId) return true;
 
         // 2. Email matching
         if (cleanTargetEmail && rEmail && isEmailMatch(rEmail, cleanTargetEmail)) return true;
@@ -587,27 +601,53 @@ export default function DashboardPage() {
     loadAllMembers();
     fetchRecentActivities().then(data => setRecentActivities(data || []));
 
-    // Realtime attendance listener
+    // Realtime attendance listener with cross-device sync and fallback
     const attChannel = supabase
       .channel("admin-dashboard-realtime-attendance")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "attendance" },
-        () => {
+        (payload) => {
+          console.log("Realtime attendance update received on Admin Dashboard:", payload);
           loadAllMembers();
           loadDashboardData();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("Realtime subscription status on Admin Dashboard:", status);
+      });
 
     const handleUpdate = () => {
       loadDashboardData();
       loadAllMembers();
     };
 
+    // Fallback sync: refetch on window focus / tab visibility change
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadAllMembers();
+        loadDashboardData();
+      }
+    };
+
     window.addEventListener("dataChanged", handleUpdate);
+    window.addEventListener("focus", handleUpdate);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    // Safety heartbeat synchronization every 20 seconds
+    const intervalId = setInterval(() => {
+      loadAllMembers();
+    }, 20000);
+
     return () => {
       window.removeEventListener("dataChanged", handleUpdate);
+      window.removeEventListener("focus", handleUpdate);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+      clearInterval(intervalId);
       supabase.removeChannel(attChannel);
     };
   }, [loadDashboardData, loadAllMembers]);

@@ -447,16 +447,43 @@ export async function POST(request) {
           date: attDate,
           status: attendanceStatus,
           attendance_status: attendanceStatus,
-          attendance_marked: attendanceMarked,
           check_in: checkInTime,
           check_in_time: checkInTime,
           check_out: checkOutTime,
           check_out_time: checkOutTime,
           ip_address: effectiveIp,
           public_ip: effectiveIp,
-          network_verified: attendanceStatus === "Present" || attendanceStatus === "Late",
           notes: record.notes || (attendanceStatus === "Absent" ? "Absent" : "Attendance recorded"),
           updated_at: new Date().toISOString()
+        };
+
+        const executeDbOperation = async (operation, payload, targetId = null) => {
+          let currentPayload = { ...payload };
+          for (let attempt = 0; attempt < 5; attempt++) {
+            let res;
+            if (operation === "update") {
+              res = await supabase.from("attendance").update(currentPayload).eq("id", targetId).select();
+            } else {
+              res = await supabase.from("attendance").insert([currentPayload]).select();
+            }
+
+            if (!res.error) {
+              return res.data;
+            }
+
+            const errMsg = res.error.message || "";
+            console.warn(`Attendance DB ${operation} attempt ${attempt + 1} notice:`, errMsg);
+
+            // Handle missing column schema cache error: "Could not find the 'column_name' column of 'attendance' in the schema cache"
+            const match = errMsg.match(/Could not find the '([^']+)' column/i);
+            if (match && match[1] && currentPayload[match[1]] !== undefined) {
+              delete currentPayload[match[1]];
+              continue;
+            }
+
+            throw res.error;
+          }
+          throw new Error(`Failed to ${operation} attendance record after column stripping`);
         };
 
         if (existingRows && existingRows.length > 0) {
@@ -466,31 +493,14 @@ export async function POST(request) {
             attPayload.check_in = existingRows[0].check_in;
           }
 
-          const { data: updated, error: updateError } = await supabase
-            .from("attendance")
-            .update(attPayload)
-            .eq("id", existingRows[0].id)
-            .select();
-
-          if (updateError) {
-            console.error("Attendance update error:", updateError);
-            throw updateError;
-          }
+          const updated = await executeDbOperation("update", attPayload, existingRows[0].id);
           if (updated && updated.length > 0) {
             savedRecords.push(updated[0]);
           }
         } else {
           // Insert new record
           attPayload.created_at = new Date().toISOString();
-          const { data: inserted, error: insertError } = await supabase
-            .from("attendance")
-            .insert([attPayload])
-            .select();
-
-          if (insertError) {
-            console.error("Attendance insert error:", insertError);
-            throw insertError;
-          }
+          const inserted = await executeDbOperation("insert", attPayload);
           if (inserted && inserted.length > 0) {
             savedRecords.push(inserted[0]);
           }

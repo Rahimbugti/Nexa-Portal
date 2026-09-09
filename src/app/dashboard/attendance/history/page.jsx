@@ -512,13 +512,33 @@ export default function AdminAttendanceHistoryHub() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "attendance" },
-        () => {
+        (payload) => {
+          console.log("Realtime attendance update in History:", payload);
           loadAllAttendanceHubData();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("Realtime subscription status on History:", status);
+      });
+
+    const handleFocusSync = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadAllAttendanceHubData();
+      }
+    };
+
+    window.addEventListener("focus", handleFocusSync);
+    window.addEventListener("dataChanged", loadAllAttendanceHubData);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleFocusSync);
+    }
 
     return () => {
+      window.removeEventListener("focus", handleFocusSync);
+      window.removeEventListener("dataChanged", loadAllAttendanceHubData);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleFocusSync);
+      }
       supabase.removeChannel(channel);
     };
   }, []);
