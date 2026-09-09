@@ -1284,20 +1284,6 @@ export default function StudentDedicatedDashboardPage() {
     }
   };
 
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("storage"));
-        window.dispatchEvent(new Event("dataChanged"));
-      }
-
-      showToast("Check-In Successful 🟢", `Checked in at ${timeStr} as ${attStatus}.`, "success");
-    } catch (e) {
-      console.error("Check-in error:", e);
-      showToast("Notice ℹ️", "Check-in logged locally.", "info");
-    } finally {
-      setMarkingAttendance(false);
-    }
-  };
-
   const handleStudentCheckOut = async () => {
     if (!todayAttendance?.check_in_time) {
       showToast("Check-In Required 🛑", "You must check in first before checking out.", "error");
